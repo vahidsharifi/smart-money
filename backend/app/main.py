@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -81,7 +82,8 @@ async def run_migrations() -> None:
 
     config = Config("alembic.ini")
     try:
-        command.upgrade(config, "head")
+        # Run Alembic in a thread to avoid asyncio.run() in a running loop.
+        await asyncio.to_thread(command.upgrade, config, "head")
     except Exception as exc:
         logger.exception("migration_failed")
         raise RuntimeError("Migration failed") from exc
