@@ -121,7 +121,10 @@ class TokenRisk(Base):
 
     chain: Mapped[str] = mapped_column(String(32), primary_key=True)
     address: Mapped[str] = mapped_column(String(128), primary_key=True)
+    token_address: Mapped[str | None] = mapped_column(String(128))
     score: Mapped[float | None] = mapped_column(Float)
+    tss: Mapped[float | None] = mapped_column(Float)
+    flags: Mapped[dict | None] = mapped_column(JSONB)
     components: Mapped[dict] = mapped_column(JSONB)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

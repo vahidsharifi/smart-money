@@ -238,10 +238,22 @@ async def _store_token_risk(
     score: float,
     components: dict[str, Any],
 ) -> None:
+    tss = None
+    flags = None
+    if isinstance(components, dict):
+        tss_payload = components.get("tss")
+        if isinstance(tss_payload, dict):
+            tss = _safe_float(tss_payload.get("score"))
+        flags_value = components.get("flags")
+        if isinstance(flags_value, list):
+            flags = flags_value
     record = TokenRisk(
         chain=chain,
         address=token_address,
+        token_address=token_address,
         score=score,
+        tss=tss,
+        flags=flags,
         components=components,
         updated_at=datetime.utcnow(),
     )
