@@ -263,6 +263,13 @@ async def process_batch(
             )
         except Exception:
             logger.exception("decoder_message_failed", extra={"message_id": message_id})
+            try:
+                await session.rollback()
+            except Exception:
+                logger.exception(
+                    "decoder_session_rollback_failed",
+                    extra={"message_id": message_id},
+                )
             await retry_or_dead_letter(
                 redis,
                 stream=STREAM_RAW_EVENTS,
