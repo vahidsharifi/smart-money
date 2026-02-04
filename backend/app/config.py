@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     watched_addresses_bsc: list[str] = Field(
         default_factory=list, validation_alias="WATCHED_ADDRESSES_BSC"
     )
+    tier_ocean_threshold: float = Field(1_000_000, validation_alias="TIER_OCEAN_THRESHOLD")
+    tier_shadow_threshold: float = Field(100_000, validation_alias="TIER_SHADOW_THRESHOLD")
+    tier_titan_threshold: float = Field(10_000, validation_alias="TIER_TITAN_THRESHOLD")
 
     @field_validator("chain_config", mode="before")
     @classmethod
