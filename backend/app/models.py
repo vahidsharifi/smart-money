@@ -138,6 +138,8 @@ class Alert(Base):
     wallet_address: Mapped[str] = mapped_column(String(128))
     token_address: Mapped[str | None] = mapped_column(String(128))
     alert_type: Mapped[str] = mapped_column(String(64))
+    tss: Mapped[float | None] = mapped_column(Float)
+    conviction: Mapped[float | None] = mapped_column(Float)
     reasons: Mapped[dict] = mapped_column(JSONB)
     narrative: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

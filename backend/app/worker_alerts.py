@@ -144,6 +144,8 @@ async def run_once() -> int:
                     wallet_address=trade.wallet_address,
                     token_address=trade.token_address,
                     alert_type=ALERT_TYPE,
+                    tss=tss_score,
+                    conviction=conviction,
                     reasons=reasons,
                     narrative=narrative,
                     created_at=datetime.utcnow(),

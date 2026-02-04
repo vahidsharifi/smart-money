@@ -12,6 +12,7 @@ from app.worker_alerts import run_once
 async def main() -> None:
     wallet_address = f"0x{uuid.uuid4().hex[:40]}"
     token_address = f"0x{uuid.uuid4().hex[:40]}"
+    tx_hash = "0x" + "d" * 64
 
     async with async_session() as session:
         session.add(
@@ -32,10 +33,10 @@ async def main() -> None:
                 updated_at=datetime.utcnow(),
             )
         )
-        session.add(
+        await session.merge(
             Trade(
                 chain="ethereum",
-                tx_hash="0x" + "d" * 64,
+                tx_hash=tx_hash,
                 log_index=0,
                 wallet_address=wallet_address,
                 token_address=token_address,
