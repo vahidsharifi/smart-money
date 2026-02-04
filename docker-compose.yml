@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: titan
+      POSTGRES_PASSWORD: titan
+      POSTGRES_DB: titan
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://titan:titan@db:5432/titan
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+      ALCHEMY_WSS_URL: ${ALCHEMY_WSS_URL}
+      DEXSCREENER_BASE_URL: https://api.dexscreener.com/latest/dex
+      GOPLUS_BASE_URL: https://api.gopluslabs.io/api/v1
+      LOG_LEVEL: info
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+      - ollama
+
+  worker:
+    build: ./backend
+    command: python -m app.worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://titan:titan@db:5432/titan
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+      ALCHEMY_WSS_URL: ${ALCHEMY_WSS_URL}
+      DEXSCREENER_BASE_URL: https://api.dexscreener.com/latest/dex
+      GOPLUS_BASE_URL: https://api.gopluslabs.io/api/v1
+      LOG_LEVEL: info
+    depends_on:
+      - db
+      - redis
+      - ollama
+
+  web:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  db_data:
+  ollama_data:
