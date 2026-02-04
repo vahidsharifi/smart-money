@@ -94,6 +94,16 @@ The worker consumes Redis Stream entries from `score_jobs` and persists scores t
 redis-cli XADD score_jobs * token_address 0x0000000000000000000000000000000000000000 chain ethereum
 ```
 
+## Watching addresses for EVM logs
+
+The EVM listener only subscribes to explicit watch lists. Provide comma-separated
+addresses (or a JSON array) per chain in your `.env`:
+
+```bash
+WATCHED_ADDRESSES_ETH=0xabc...,0xdef...
+WATCHED_ADDRESSES_BSC=["0x123...", "0x456..."]
+```
+
 ## Smoke tests
 
 Run these after `docker compose up --build`:
