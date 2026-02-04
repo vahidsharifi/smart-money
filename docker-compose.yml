@@ -4,18 +4,28 @@ services:
   db:
     image: postgres:16
     environment:
-      POSTGRES_USER: titan
-      POSTGRES_PASSWORD: titan
-      POSTGRES_DB: titan
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - db_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
-    image: redis:7
+    image: redis:alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   ollama:
     image: ollama/ollama:latest
@@ -26,39 +36,94 @@ services:
 
   api:
     build: ./backend
+    env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://titan:titan@db:5432/titan
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
-      ALCHEMY_WSS_URL: ${ALCHEMY_WSS_URL}
-      DEXSCREENER_BASE_URL: https://api.dexscreener.com/latest/dex
-      GOPLUS_BASE_URL: https://api.gopluslabs.io/api/v1
-      LOG_LEVEL: info
     ports:
       - "8000:8000"
     depends_on:
-      - db
-      - redis
-      - ollama
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
 
-  worker:
+  worker_listener_evm:
     build: ./backend
-    command: python -m app.worker
+    command: python -m app.worker_listener_evm
+    env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://titan:titan@db:5432/titan
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
-      ALCHEMY_WSS_URL: ${ALCHEMY_WSS_URL}
-      DEXSCREENER_BASE_URL: https://api.dexscreener.com/latest/dex
-      GOPLUS_BASE_URL: https://api.gopluslabs.io/api/v1
-      LOG_LEVEL: info
     depends_on:
-      - db
-      - redis
-      - ollama
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
-  web:
+  worker_decoder:
+    build: ./backend
+    command: python -m app.worker_decoder
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker_risk:
+    build: ./backend
+    command: python -m app.worker_risk
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker_profiler:
+    build: ./backend
+    command: python -m app.worker_profiler
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker_alerts:
+    build: ./backend
+    command: python -m app.worker_alerts
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
     build: ./frontend
+    env_file: .env
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
     ports:

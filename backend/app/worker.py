@@ -5,7 +5,7 @@ from typing import Any
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import settings, validate_chain_config
 from app.db import async_session
 from app.logging import configure_logging
 from app.models import ScoreRecord
@@ -25,6 +25,8 @@ def _parse_job(message: dict[str, Any]) -> tuple[str, str]:
     chain = message.get("chain", "ethereum")
     if not token_address:
         raise ValueError("token_address missing")
+    if settings.chain_config and chain not in settings.chain_config:
+        raise ValueError(f"Unsupported chain: {chain}")
     return token_address, chain
 
 
@@ -52,6 +54,8 @@ async def handle_job(redis: Redis, session: AsyncSession, message: dict[str, Any
 
 
 async def run_worker() -> None:
+    validate_chain_config()
+
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     await ensure_group(redis)
     async with async_session() as session:

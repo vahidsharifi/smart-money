@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import settings, validate_chain_config
 from app.db import async_session, get_session
 from app.logging import configure_logging
 from app.models import ScoreRecord
@@ -76,6 +76,8 @@ async def narrate(request: NarrativeRequest) -> NarrativeResponse:
 async def run_migrations() -> None:
     from alembic import command
     from alembic.config import Config
+
+    validate_chain_config()
 
     config = Config("alembic.ini")
     try:
