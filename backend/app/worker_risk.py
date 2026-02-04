@@ -324,6 +324,7 @@ async def process_risk_batch(
             )
         except Exception:
             logger.exception("risk_job_failed", extra={"message_id": message_id})
+            await session.rollback()
             await retry_or_dead_letter(
                 redis,
                 stream=STREAM_RISK_JOBS,
