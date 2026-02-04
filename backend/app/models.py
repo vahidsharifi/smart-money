@@ -49,12 +49,14 @@ class Trade(Base):
     chain: Mapped[str] = mapped_column(String(32), primary_key=True)
     tx_hash: Mapped[str] = mapped_column(String(128), primary_key=True)
     log_index: Mapped[int] = mapped_column(Integer, primary_key=True)
-    wallet_address: Mapped[str] = mapped_column(String(128))
-    token_address: Mapped[str] = mapped_column(String(128))
+    block_number: Mapped[int | None] = mapped_column(Integer)
+    wallet_address: Mapped[str | None] = mapped_column(String(128))
+    token_address: Mapped[str | None] = mapped_column(String(128))
     side: Mapped[str | None] = mapped_column(String(16))
     amount: Mapped[float | None] = mapped_column(Float)
     price: Mapped[float | None] = mapped_column(Float)
-    block_time: Mapped[datetime] = mapped_column(DateTime)
+    usd_value: Mapped[float | None] = mapped_column(Float)
+    block_time: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
