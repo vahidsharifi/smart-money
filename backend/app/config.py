@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     goplus_base_url: str = "https://api.gopluslabs.io/api/v1"
     log_level: str = "info"
     chain_config: dict[str, ChainConfig] = Field(default_factory=dict, validation_alias="CHAIN_CONFIG")
+    watched_addresses_eth: list[str] = Field(
+        default_factory=list, validation_alias="WATCHED_ADDRESSES_ETH"
+    )
+    watched_addresses_bsc: list[str] = Field(
+        default_factory=list, validation_alias="WATCHED_ADDRESSES_BSC"
+    )
 
     @field_validator("chain_config", mode="before")
     @classmethod
@@ -33,6 +39,17 @@ class Settings(BaseSettings):
             return {}
         if isinstance(value, str):
             return json.loads(value)
+        return value
+
+    @field_validator("watched_addresses_eth", "watched_addresses_bsc", mode="before")
+    @classmethod
+    def parse_watched_addresses(cls, value: Any) -> Any:
+        if value in (None, ""):
+            return []
+        if isinstance(value, str):
+            if value.strip().startswith("["):
+                return json.loads(value)
+            return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
 
