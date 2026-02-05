@@ -74,6 +74,20 @@ store decimal fractions (e.g., `0.25` = 25%).
 - **watch_pairs**: per-chain DEX pair watchlist with priority and TTL fields (`expires_at`).
 - **signal_outcomes**: per-alert, per-horizon outcome metrics for sellability and tradeable returns.
 
+### Outcome evaluator
+`worker_outcome_evaluator` runs every 5 minutes and backfills unevaluated horizons (`30m`, `360m`, `1440m`) per alert.
+
+Outcome fields are interpreted as:
+- `was_sellable_entire_window`: `true`/`false` when enough token-risk snapshots exist inside the horizon; `null` means insufficient risk snapshots.
+- `trap_flag`: `true` when any in-window snapshot contains critical flags (`honeypot`, `cannot_sell`, `liquidity_floor_breach`, `liquidity_pull`).
+- `min_exit_slippage_1k` / `max_exit_slippage_1k`: estimated from `max_suggested_size_usd` (or explicit slippage components when present). `null` means insufficient liquidity/slippage inputs.
+- `tradeable_peak_gain` / `tradeable_drawdown`: computed from in-window prices (trades first, DexScreener fallback). `null` means price series too sparse.
+- `net_tradeable_return_est`: peak gain minus conservative cost model (gas + slippage); forced negative when token is unsellable for the window.
+
+Limitations:
+- The evaluator prefers risk snapshots in `token_risk.components.history`; if only a single latest `token_risk` row is present, long-horizon sellability can remain `null`.
+- DexScreener fallback is cache-backed and intentionally sparse, so historical precision is lower than swap-derived trade prices.
+
 ### Wallet metadata additions
 - **wallets**: `source`, `prior_weight`, `merit_score`, `tier`, `tier_reason`, `ignore_reason` plus indexes on tier and merit score.
 
@@ -188,6 +202,7 @@ You can also run the backend API smoke script after seeding alerts:
 docker compose exec api python -m app.scripts.smoke_alerts
 docker compose exec api python -m app.scripts.smoke_api
 docker compose exec api python -m app.scripts.smoke_autopilot
+docker compose exec api python -m app.scripts.smoke_outcomes
 ```
 
 ## Troubleshooting
