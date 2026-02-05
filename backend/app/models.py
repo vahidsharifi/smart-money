@@ -164,6 +164,10 @@ class SignalOutcome(Base):
     tradeable_peak_gain: Mapped[Decimal | None] = mapped_column(
         Numeric, comment="Decimal fraction (1.0 = 100%)."
     )
+    exit_feasible_peak_gain: Mapped[Decimal | None] = mapped_column(
+        Numeric, comment="Peak gain observed only during exit-feasible snapshots."
+    )
+    exit_feasible_peak_time: Mapped[datetime | None] = mapped_column(DateTime)
     tradeable_drawdown: Mapped[Decimal | None] = mapped_column(Numeric)
     net_tradeable_return_est: Mapped[Decimal | None] = mapped_column(Numeric)
     trap_flag: Mapped[bool | None] = mapped_column(Boolean)
