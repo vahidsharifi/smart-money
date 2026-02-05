@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
@@ -41,3 +42,48 @@ class NarrativeRequest(BaseModel):
 
 class NarrativeResponse(BaseModel):
     narrative: str
+
+
+class AlertResponse(BaseModel):
+    id: UUID
+    chain: str
+    wallet_address: str
+    token_address: str | None
+    alert_type: str
+    reasons: dict[str, Any]
+    narrative: str | None
+    created_at: datetime
+
+
+class WalletTier(str, Enum):
+    ocean = "ocean"
+    shadow = "shadow"
+    titan = "titan"
+    ignore = "ignore"
+
+
+class WalletSummary(BaseModel):
+    chain: str
+    address: str
+    total_value: float | None
+    pnl: float | None
+    tier: WalletTier
+    updated_at: datetime
+
+
+class WalletDetail(BaseModel):
+    address: str
+    wallets: list[WalletSummary]
+
+
+class TokenRiskResponse(BaseModel):
+    chain: str
+    address: str
+    score: float | None
+    components: dict[str, Any]
+    updated_at: datetime
+
+
+class RegimeResponse(BaseModel):
+    regime: str
+    updated_at: datetime | None

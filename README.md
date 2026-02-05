@@ -46,6 +46,17 @@ docker compose logs -f
 curl http://localhost:8000/health
 ```
 
+### Read-only endpoints
+
+```bash
+curl "http://localhost:8000/alerts?limit=25&offset=0&chain=ethereum"
+curl "http://localhost:8000/alerts/<alert-id>"
+curl "http://localhost:8000/wallets?tier=shadow"
+curl "http://localhost:8000/wallets/<wallet-address>"
+curl "http://localhost:8000/tokens/ethereum/<token-address>/risk"
+curl "http://localhost:8000/regime"
+```
+
 ## Environment variables
 
 | Variable | Purpose | Default |
@@ -112,6 +123,13 @@ Run these after `docker compose up --build`:
 ./scripts/smoke_api.sh
 ./scripts/smoke_worker.sh
 ./scripts/smoke_web.sh
+```
+
+You can also run the backend API smoke script after seeding alerts:
+
+```bash
+docker compose exec api python -m app.scripts.smoke_alerts
+docker compose exec api python -m app.scripts.smoke_api
 ```
 
 ## Architecture notes

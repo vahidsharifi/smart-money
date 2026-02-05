@@ -1,16 +1,31 @@
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
+from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Path, Query
+from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings, validate_chain_config
 from app.db import async_session, get_session
 from app.logging import configure_logging
-from app.models import ScoreRecord
-from app.schemas import NarrativeRequest, NarrativeResponse, ScoreRequest, ScoreResponse
+from app.models import Alert, ScoreRecord, TokenRisk, WalletMetric
+from app.schemas import (
+    AlertResponse,
+    NarrativeRequest,
+    NarrativeResponse,
+    RegimeResponse,
+    ScoreRequest,
+    ScoreResponse,
+    TokenRiskResponse,
+    WalletDetail,
+    WalletSummary,
+    WalletTier,
+)
 from app.scoring import deterministic_score
 from app.services import fetch_dexscreener, fetch_goplus, narrate_with_ollama
 
@@ -18,6 +33,13 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Project Titan API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://frontend:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 async def get_redis() -> Redis:
@@ -26,6 +48,18 @@ async def get_redis() -> Redis:
         yield redis
     finally:
         await redis.close()
+
+
+def _tier_for_value(total_value: float | None) -> WalletTier:
+    if total_value is None:
+        return WalletTier.ignore
+    if total_value >= settings.tier_ocean_threshold:
+        return WalletTier.ocean
+    if total_value >= settings.tier_shadow_threshold:
+        return WalletTier.shadow
+    if total_value >= settings.tier_titan_threshold:
+        return WalletTier.titan
+    return WalletTier.ignore
 
 
 @app.get("/health")
@@ -71,6 +105,128 @@ async def score_token(
 async def narrate(request: NarrativeRequest) -> NarrativeResponse:
     narrative = await narrate_with_ollama([reason.model_dump() for reason in request.reasons])
     return NarrativeResponse(narrative=narrative)
+
+
+@app.get("/alerts", response_model=list[AlertResponse])
+async def list_alerts(
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    chain: str | None = Query(None, min_length=1),
+    session: AsyncSession = Depends(get_session),
+) -> list[AlertResponse]:
+    query = select(Alert).order_by(Alert.created_at.desc()).offset(offset).limit(limit)
+    if chain:
+        query = query.where(Alert.chain == chain)
+    result = await session.execute(query)
+    alerts = result.scalars().all()
+    return [
+        AlertResponse(
+            id=alert.id,
+            chain=alert.chain,
+            wallet_address=alert.wallet_address,
+            token_address=alert.token_address,
+            alert_type=alert.alert_type,
+            reasons=alert.reasons if isinstance(alert.reasons, dict) else {},
+            narrative=alert.narrative,
+            created_at=alert.created_at,
+        )
+        for alert in alerts
+    ]
+
+
+@app.get("/alerts/{alert_id}", response_model=AlertResponse)
+async def get_alert(
+    alert_id: UUID = Path(...),
+    session: AsyncSession = Depends(get_session),
+) -> AlertResponse:
+    result = await session.execute(select(Alert).where(Alert.id == alert_id).limit(1))
+    alert = result.scalar_one_or_none()
+    if alert is None:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return AlertResponse(
+        id=alert.id,
+        chain=alert.chain,
+        wallet_address=alert.wallet_address,
+        token_address=alert.token_address,
+        alert_type=alert.alert_type,
+        reasons=alert.reasons if isinstance(alert.reasons, dict) else {},
+        narrative=alert.narrative,
+        created_at=alert.created_at,
+    )
+
+
+@app.get("/wallets", response_model=list[WalletSummary])
+async def list_wallets(
+    tier: WalletTier | None = Query(None),
+    session: AsyncSession = Depends(get_session),
+) -> list[WalletSummary]:
+    result = await session.execute(select(WalletMetric))
+    wallets = result.scalars().all()
+    summaries: list[WalletSummary] = []
+    for metric in wallets:
+        summary = WalletSummary(
+            chain=metric.chain,
+            address=metric.wallet_address,
+            total_value=metric.total_value,
+            pnl=metric.pnl,
+            tier=_tier_for_value(metric.total_value),
+            updated_at=metric.updated_at,
+        )
+        if tier and summary.tier != tier:
+            continue
+        summaries.append(summary)
+    return summaries
+
+
+@app.get("/wallets/{address}", response_model=WalletDetail)
+async def get_wallet(
+    address: str = Path(..., min_length=3),
+    session: AsyncSession = Depends(get_session),
+) -> WalletDetail:
+    result = await session.execute(select(WalletMetric).where(WalletMetric.wallet_address == address))
+    metrics = result.scalars().all()
+    if not metrics:
+        raise HTTPException(status_code=404, detail="Wallet not found")
+    return WalletDetail(
+        address=address,
+        wallets=[
+            WalletSummary(
+                chain=metric.chain,
+                address=metric.wallet_address,
+                total_value=metric.total_value,
+                pnl=metric.pnl,
+                tier=_tier_for_value(metric.total_value),
+                updated_at=metric.updated_at,
+            )
+            for metric in metrics
+        ],
+    )
+
+
+@app.get("/tokens/{chain}/{address}/risk", response_model=TokenRiskResponse)
+async def get_token_risk(
+    chain: str = Path(..., min_length=1),
+    address: str = Path(..., min_length=3),
+    session: AsyncSession = Depends(get_session),
+) -> TokenRiskResponse:
+    result = await session.execute(
+        select(TokenRisk).where(TokenRisk.chain == chain, TokenRisk.address == address).limit(1)
+    )
+    token_risk = result.scalar_one_or_none()
+    if token_risk is None:
+        raise HTTPException(status_code=404, detail="Token risk not found")
+    return TokenRiskResponse(
+        chain=token_risk.chain,
+        address=token_risk.address,
+        score=token_risk.score,
+        components=token_risk.components if isinstance(token_risk.components, dict) else {},
+        updated_at=token_risk.updated_at,
+    )
+
+
+@app.get("/regime", response_model=RegimeResponse)
+async def get_regime() -> RegimeResponse:
+    return RegimeResponse(regime="neutral", updated_at=datetime.utcnow())
 
 
 @app.on_event("startup")
