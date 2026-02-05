@@ -19,6 +19,17 @@ FIXTURE_FILES = [
     "pancakeswap_v2_swap.json",
 ]
 
+def _serialize_payload(payload: dict) -> dict[str, str]:
+    serialized: dict[str, str] = {}
+    for key, value in payload.items():
+        if value is None:
+            serialized[key] = ""
+        elif isinstance(value, (list, dict)):
+            serialized[key] = json.dumps(value)
+        else:
+            serialized[key] = str(value)
+    return serialized
+
 
 async def main() -> None:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
@@ -28,7 +39,9 @@ async def main() -> None:
             payload = json.loads((FIXTURES_DIR / fixture_file).read_text())
             payload["injectedAt"] = datetime.utcnow().isoformat()
             tx_hashes.append(payload["txHash"])
-            message_id = await publish_to_stream(redis, STREAM_RAW_EVENTS, payload)
+            message_id = await publish_to_stream(
+                redis, STREAM_RAW_EVENTS, _serialize_payload(payload)
+            )
             print(f"Injected fixture {fixture_file} into {STREAM_RAW_EVENTS} id={message_id}")
     finally:
         await redis.close()
