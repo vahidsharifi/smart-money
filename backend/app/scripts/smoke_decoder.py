@@ -1,16 +1,24 @@
 import asyncio
 
 from sqlalchemy import select
+from redis.asyncio import Redis
 
+from app.config import settings
 from app.db import async_session
 from app.models import Trade
 from app.scripts import smoke_listener
-from app.worker_decoder import run_once
+from app.utils import STREAM_RAW_EVENTS, ensure_consumer_group
+from app.worker_decoder import GROUP_NAME, run_once
 
 FAKE_TX_HASH = "0x" + "1" * 64
 
 
 async def main() -> None:
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        await ensure_consumer_group(redis, stream=STREAM_RAW_EVENTS, group=GROUP_NAME, start_id="$")
+    finally:
+        await redis.close()
     await smoke_listener.main()
     await run_once()
 

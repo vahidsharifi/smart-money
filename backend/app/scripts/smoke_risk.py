@@ -7,8 +7,8 @@ from sqlalchemy import select
 from app.config import settings
 from app.db import async_session
 from app.models import TokenRisk
-from app.utils import STREAM_DECODED_TRADES, publish_to_stream
-from app.worker_risk import run_once
+from app.utils import STREAM_DECODED_TRADES, STREAM_RISK_JOBS, ensure_consumer_group, publish_to_stream
+from app.worker_risk import DECODED_GROUP, RISK_GROUP, run_once
 
 TOKEN_PLACEHOLDERS = {
     "ethereum": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -28,6 +28,17 @@ def _choose_chain() -> str:
 async def main() -> None:
     chain = _choose_chain()
     token_address = TOKEN_PLACEHOLDERS.get(chain, TOKEN_PLACEHOLDERS["ethereum"])
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        await ensure_consumer_group(
+            redis, stream=STREAM_DECODED_TRADES, group=DECODED_GROUP, start_id="$"
+        )
+        await ensure_consumer_group(
+            redis, stream=STREAM_RISK_JOBS, group=RISK_GROUP, start_id="$"
+        )
+    finally:
+        await redis.close()
+
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     payload = {
         "chain": chain,

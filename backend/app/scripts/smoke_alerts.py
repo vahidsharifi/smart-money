@@ -1,11 +1,12 @@
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.db import async_session
-from app.models import Alert, TokenRisk, Trade, WalletMetric
+from app.models import Alert, SignalOutcome, TokenRisk, Trade, WalletMetric
 from app.worker_alerts import run_once
 
 
@@ -13,6 +14,7 @@ async def main() -> None:
     wallet_address = f"0x{uuid.uuid4().hex[:40]}"
     token_address = f"0x{uuid.uuid4().hex[:40]}"
     tx_hash = "0x" + "d" * 64
+    seed_wallet = f"0x{uuid.uuid4().hex[:40]}"
 
     async with async_session() as session:
         session.add(
@@ -22,6 +24,33 @@ async def main() -> None:
                 total_value=25_000.0,
                 pnl=0.0,
                 updated_at=datetime.utcnow(),
+            )
+        )
+        seed_alert = Alert(
+            chain="ethereum",
+            wallet_address=seed_wallet,
+            token_address=token_address,
+            alert_type="trade_conviction",
+            tss=70.0,
+            conviction=50.0,
+            reasons={"seed": True},
+            narrative="seed",
+            created_at=datetime.utcnow() - timedelta(hours=6),
+        )
+        session.add(seed_alert)
+        await session.flush()
+        session.add(
+            SignalOutcome(
+                alert_id=seed_alert.id,
+                horizon_minutes=360,
+                was_sellable_entire_window=True,
+                min_exit_slippage_1k=Decimal("0.01"),
+                max_exit_slippage_1k=Decimal("0.02"),
+                tradeable_peak_gain=Decimal("0.22"),
+                tradeable_drawdown=Decimal("-0.04"),
+                net_tradeable_return_est=Decimal("0.15"),
+                trap_flag=False,
+                evaluated_at=datetime.utcnow(),
             )
         )
         session.add(
@@ -42,8 +71,8 @@ async def main() -> None:
                 token_address=token_address,
                 side="BUY",
                 amount=5.0,
-                price=2.0,
-                usd_value=10.0,
+                price=100.0,
+                usd_value=500.0,
                 block_time=datetime.utcnow(),
                 created_at=datetime.utcnow(),
             )
