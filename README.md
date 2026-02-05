@@ -28,6 +28,16 @@ Services will be available:
 - Web: http://localhost:3000
 - Ollama: http://localhost:11434
 
+### Dashboard usage
+
+Once the stack is running, open http://localhost:3000 to access the dashboard. The UI includes:
+- **Live Feed**: recent alerts with TSS, conviction, and the current regime.
+- **Shadow Pool**: wallet metrics filtered by tier (ocean/shadow/titan/ignore).
+- **Token Scanner**: lookup for token risk components + latest alerts for a token.
+
+You can point the frontend at a different API host by setting `NEXT_PUBLIC_API_BASE_URL`
+in `frontend/.env.local` (default: `http://localhost:8000`).
+
 ### Run migrations
 
 ```bash
