@@ -44,6 +44,26 @@ in `frontend/.env.local` (default: `http://localhost:8000`).
 docker compose exec api alembic upgrade head
 ```
 
+## Seed pack warm-start
+
+Warm-start seed packs are loaded from three CSVs placed either at the repo root
+or in a `/seed_pack` directory:
+
+- `watched_pools.csv`
+- `seed_wallets.csv`
+- `ignore_list.csv`
+
+Run the import with:
+
+```bash
+make seed_import
+```
+
+This uses the existing `wallets` table for ignore enforcement (`tier=ignore`), which
+keeps ingestion checks O(1) via the primary key lookup on `(chain, address)` and avoids
+introducing another table to keep in sync. Ignored wallets are skipped during decoding
+and never promoted by downstream workers.
+
 ## Titan v8.0 schema additions
 
 The v8.0 schema adds targeted tables and wallet metadata to support watch lists

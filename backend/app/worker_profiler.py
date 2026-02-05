@@ -13,6 +13,7 @@ from app.logging import configure_logging
 from app.models import Alert, Position, Trade, WalletMetric
 from app.narrator import narrate_alert
 from app.utils import install_shutdown_handlers
+from app.utils.wallets import is_wallet_ignored
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -208,6 +209,15 @@ async def run_once() -> int:
 
         updates = 0
         for (chain, wallet_address), positions in positions_by_wallet.items():
+            if await is_wallet_ignored(
+                session, chain=chain, wallet_address=wallet_address
+            ):
+                logger.info(
+                    "profiler_skip_ignored_wallet chain=%s wallet=%s",
+                    chain,
+                    wallet_address,
+                )
+                continue
             await _upsert_positions(
                 session, chain=chain, wallet_address=wallet_address, positions=positions
             )
