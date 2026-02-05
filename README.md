@@ -44,6 +44,19 @@ in `frontend/.env.local` (default: `http://localhost:8000`).
 docker compose exec api alembic upgrade head
 ```
 
+## Titan v8.0 schema additions
+
+The v8.0 schema adds targeted tables and wallet metadata to support watch lists
+and signal outcome evaluation. Tradeable performance fields in `signal_outcomes`
+store decimal fractions (e.g., `0.25` = 25%).
+
+### New tables
+- **watch_pairs**: per-chain DEX pair watchlist with priority and TTL fields (`expires_at`).
+- **signal_outcomes**: per-alert, per-horizon outcome metrics for sellability and tradeable returns.
+
+### Wallet metadata additions
+- **wallets**: `source`, `prior_weight`, `merit_score`, `tier`, `tier_reason`, `ignore_reason` plus indexes on tier and merit score.
+
 ### View logs
 
 ```bash
