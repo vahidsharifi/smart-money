@@ -5,10 +5,12 @@ import json
 import logging
 from typing import Any
 
+import httpx
 from redis.asyncio import Redis
 
 from app.config import settings, validate_chain_config
 from app.db import async_session
+from app.dex_registry import lookup_dex
 from app.logging import configure_logging
 from app.models import Trade
 from app.utils import (
@@ -18,9 +20,9 @@ from app.utils import (
     acknowledge_message,
     consume_from_stream,
     ensure_consumer_group,
+    install_shutdown_handlers,
     publish_to_stream,
     retry_or_dead_letter,
-    install_shutdown_handlers,
 )
 from app.utils.wallets import is_wallet_ignored
 
@@ -31,6 +33,13 @@ GROUP_NAME = "decoders"
 CONSUMER_NAME = "decoder-1"
 
 UNISWAP_V2_SWAP_SIGNATURE = b"Swap(address,uint256,uint256,uint256,uint256,address)"
+UNISWAP_V2_SYNC_SIGNATURE = b"Sync(uint112,uint112)"
+UNISWAP_V3_SWAP_SIGNATURE = b"Swap(address,address,int256,int256,uint160,uint128,int24)"
+
+TOKEN0_SELECTOR = "0x0dfe1681"
+TOKEN1_SELECTOR = "0xd21220a7"
+TOKEN_LOOKUP_TTL_SECONDS = 60 * 60 * 6
+MIN_PUBLISH_CONFIDENCE = 0.6
 
 
 def _rotl(value: int, shift: int) -> int:
@@ -129,6 +138,8 @@ def _keccak_256(data: bytes) -> bytes:
 
 
 UNISWAP_V2_SWAP_TOPIC = f"0x{_keccak_256(UNISWAP_V2_SWAP_SIGNATURE).hex()}"
+UNISWAP_V2_SYNC_TOPIC = f"0x{_keccak_256(UNISWAP_V2_SYNC_SIGNATURE).hex()}"
+UNISWAP_V3_SWAP_TOPIC = f"0x{_keccak_256(UNISWAP_V3_SWAP_SIGNATURE).hex()}"
 
 
 def _parse_int(value: Any) -> int | None:
@@ -161,39 +172,99 @@ def _parse_topics(value: Any) -> list[str]:
 def _decode_uint256_list(data: str, count: int) -> list[int] | None:
     if not isinstance(data, str):
         return None
-    data = data.lower()
-    if data.startswith("0x"):
-        data = data[2:]
-    if len(data) < 64 * count:
+    payload = data[2:] if data.startswith("0x") else data
+    if len(payload) < 64 * count:
         return None
     values = []
     for i in range(count):
         start = i * 64
         end = start + 64
         try:
-            values.append(int(data[start:end], 16))
+            values.append(int(payload[start:end], 16))
         except ValueError:
             return None
     return values
 
 
+def _decode_int256_list(data: str, count: int) -> list[int] | None:
+    raw = _decode_uint256_list(data, count)
+    if raw is None:
+        return None
+    signed: list[int] = []
+    for value in raw:
+        if value >= (1 << 255):
+            value -= (1 << 256)
+        signed.append(value)
+    return signed
+
+
 def _parse_topic_address(topic: str | None) -> str | None:
     if not topic:
         return None
-    if topic.startswith("0x"):
-        topic = topic[2:]
-    if len(topic) < 40:
+    payload = topic[2:] if topic.startswith("0x") else topic
+    if len(payload) < 40:
         return None
-    return f"0x{topic[-40:]}".lower()
+    return f"0x{payload[-40:]}".lower()
 
 
-def decode_raw_event(fields: dict[str, Any]) -> dict[str, Any]:
-    chain = fields.get("chain", "ethereum")
+def _parse_word_address(word_hex: str) -> str | None:
+    payload = word_hex[2:] if word_hex.startswith("0x") else word_hex
+    if len(payload) < 64:
+        return None
+    return f"0x{payload[-40:]}".lower()
+
+
+def _rpc_http_url(chain: str) -> str | None:
+    chain_cfg = settings.chain_config.get(chain)
+    return chain_cfg.rpc_http if chain_cfg else None
+
+
+async def _rpc_eth_call(chain: str, to_address: str, data: str) -> str | None:
+    rpc_url = _rpc_http_url(chain)
+    if not rpc_url:
+        return None
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_call",
+        "params": [{"to": to_address, "data": data}, "latest"],
+    }
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.post(rpc_url, json=payload)
+    response.raise_for_status()
+    body = response.json()
+    if "error" in body:
+        return None
+    result = body.get("result")
+    return result if isinstance(result, str) else None
+
+
+async def _get_pool_token(redis: Redis, chain: str, pair_address: str, selector: str) -> str | None:
+    cache_key = f"decode:token_lookup:{chain}:{pair_address.lower()}:{selector}"
+    cached = await redis.get(cache_key)
+    if cached:
+        return cached
+    try:
+        raw = await _rpc_eth_call(chain, pair_address, selector)
+    except Exception:
+        logger.exception("token_lookup_failed", extra={"chain": chain, "pair": pair_address})
+        return None
+    if not raw:
+        return None
+    token_address = _parse_word_address(raw)
+    if not token_address:
+        return None
+    await redis.set(cache_key, token_address, ex=TOKEN_LOOKUP_TTL_SECONDS)
+    return token_address
+
+
+async def decode_raw_event(redis: Redis, fields: dict[str, Any]) -> dict[str, Any]:
+    chain = str(fields.get("chain", "ethereum")).lower()
     tx_hash = fields.get("txHash") or fields.get("tx_hash")
     log_index = _parse_int(fields.get("logIndex") or fields.get("log_index"))
     block_number = _parse_int(fields.get("blockNumber") or fields.get("block_number"))
-    address = fields.get("address")
-    topics = _parse_topics(fields.get("topics"))
+    address = str(fields.get("address") or "").lower() or None
+    topics = [topic.lower() for topic in _parse_topics(fields.get("topics"))]
     data = fields.get("data", "")
 
     wallet_address = None
@@ -202,14 +273,58 @@ def decode_raw_event(fields: dict[str, Any]) -> dict[str, Any]:
     amount = None
     price = None
     usd_value = None
+    dex = None
+    pair_address = None
+    decode_confidence = 0.0
 
-    if topics and topics[0].lower() == UNISWAP_V2_SWAP_TOPIC:
-        decoded = _decode_uint256_list(data, 4)
-        if decoded is not None:
+    topic0 = topics[0] if topics else None
+    registry_entry = lookup_dex(chain, address)
+
+    if registry_entry and topic0 in (UNISWAP_V2_SWAP_TOPIC, UNISWAP_V3_SWAP_TOPIC):
+        dex = registry_entry.dex
+        pair_address = address
+        decode_confidence = 0.5
+
+        token0 = await _get_pool_token(redis, chain, pair_address, TOKEN0_SELECTOR)
+        token1 = await _get_pool_token(redis, chain, pair_address, TOKEN1_SELECTOR)
+        if token0 and token1:
+            decode_confidence += 0.2
+        elif token0 or token1:
+            decode_confidence += 0.1
+
+        if topic0 == UNISWAP_V2_SWAP_TOPIC:
+            decoded = _decode_uint256_list(str(data), 4)
+            if decoded is not None:
+                amount0_in, amount1_in, amount0_out, amount1_out = decoded
+                sender = _parse_topic_address(topics[1]) if len(topics) > 1 else None
+                to_address = _parse_topic_address(topics[2]) if len(topics) > 2 else None
+                wallet_address = sender or to_address
+                if amount0_out > 0 or amount1_in > 0:
+                    side = "buy"
+                    token_address = token0 or token1
+                    amount = float(amount0_out or amount1_in)
+                else:
+                    side = "sell"
+                    token_address = token0 or token1
+                    amount = float(amount0_in or amount1_out)
+                decode_confidence += 0.2
+        elif topic0 == UNISWAP_V3_SWAP_TOPIC:
+            decoded = _decode_int256_list(str(data), 2)
             sender = _parse_topic_address(topics[1]) if len(topics) > 1 else None
-            to_address = _parse_topic_address(topics[2]) if len(topics) > 2 else None
-            wallet_address = sender or to_address
-            token_address = address
+            recipient = _parse_topic_address(topics[2]) if len(topics) > 2 else None
+            wallet_address = sender or recipient
+            if decoded is not None:
+                amount0, amount1 = decoded
+                side = "buy" if amount0 < 0 else "sell"
+                token_address = token0 if amount0 != 0 else token1
+                amount = float(abs(amount0) if amount0 != 0 else abs(amount1))
+                decode_confidence += 0.2
+
+    # Parse known sync events so the decoder recognizes them without emitting trades.
+    if topic0 == UNISWAP_V2_SYNC_TOPIC and registry_entry and registry_entry.strategy == "v2_pair":
+        decode_confidence = max(decode_confidence, 0.3)
+
+    decode_confidence = min(decode_confidence, 1.0)
 
     return {
         "chain": chain,
@@ -222,12 +337,15 @@ def decode_raw_event(fields: dict[str, Any]) -> dict[str, Any]:
         "amount": amount,
         "price": price,
         "usd_value": usd_value,
+        "dex": dex,
+        "pair_address": pair_address,
+        "decode_confidence": decode_confidence,
         "block_time": None,
     }
 
 
 async def handle_message(redis: Redis, session: Any, fields: dict[str, Any]) -> None:
-    record = decode_raw_event(fields)
+    record = await decode_raw_event(redis, fields)
     if not record["tx_hash"]:
         raise ValueError("missing tx_hash")
     if record.get("wallet_address") and await is_wallet_ignored(
@@ -243,11 +361,13 @@ async def handle_message(redis: Redis, session: Any, fields: dict[str, Any]) -> 
     trade = Trade(**record)
     await session.merge(trade)
     await session.commit()
-    await publish_to_stream(
-        redis,
-        STREAM_DECODED_TRADES,
-        {key: "" if value is None else str(value) for key, value in record.items()},
-    )
+
+    if record["decode_confidence"] >= MIN_PUBLISH_CONFIDENCE:
+        await publish_to_stream(
+            redis,
+            STREAM_DECODED_TRADES,
+            {key: "" if value is None else str(value) for key, value in record.items()},
+        )
 
 
 async def process_batch(
@@ -312,7 +432,7 @@ async def run_once() -> int:
     await ensure_consumer_group(redis, stream=STREAM_RAW_EVENTS, group=GROUP_NAME)
     try:
         async with async_session() as session:
-            return await process_batch(redis, session, count=1, block_ms=2_000)
+            return await process_batch(redis, session, count=16, block_ms=2_000)
     finally:
         await redis.close()
 
