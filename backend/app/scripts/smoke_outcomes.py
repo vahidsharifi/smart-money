@@ -61,6 +61,7 @@ async def main() -> None:
         )
 
         prices = [1.00, 1.08, 1.02, 1.12, 0.96, 1.18]
+        minutes_offsets = [0, 15, 120, 600, 1200, 1500]
         for idx, price in enumerate(prices):
             session.add(
                 Trade(
@@ -73,7 +74,7 @@ async def main() -> None:
                     amount=100.0,
                     price=price,
                     usd_value=price * 100,
-                    block_time=alert_time + timedelta(minutes=idx * 300),
+                    block_time=alert_time + timedelta(minutes=minutes_offsets[idx]),
                     created_at=datetime.utcnow(),
                 )
             )
