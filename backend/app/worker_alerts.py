@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 
 from app.config import settings, validate_chain_config
+from app.cost_model import estimate_trade_gas_cost
 from app.db import async_session
 from app.logging import configure_logging
 from app.models import Alert, SignalOutcome, TokenRisk, Trade, WalletMetric
@@ -58,11 +59,6 @@ def _chain_min_roi(chain: str) -> float:
         return settings.netev_min_roi_bsc
     return settings.netev_min_roi_eth
 
-
-def _chain_gas_cost(chain: str) -> float:
-    if chain == "bsc":
-        return settings.netev_gas_cost_usd_bsc
-    return settings.netev_gas_cost_usd_eth
 
 
 async def _derived_expected_move(session, *, chain: str, token_address: str) -> float | None:
@@ -120,7 +116,8 @@ async def _netev_gate(
         slippage = float(token_risk.components.get("estimated_slippage", slippage) or slippage)
 
     gross_profit_usd = size_usd * expected_move
-    gas_cost_usd = _chain_gas_cost(trade.chain)
+    gas_breakdown = await estimate_trade_gas_cost(session, trade=trade)
+    gas_cost_usd = float(gas_breakdown["gas_cost_usd"])
     slippage_cost_usd = size_usd * max(0.0, slippage)
     netev_usd = gross_profit_usd - gas_cost_usd - slippage_cost_usd
     netev_roi = netev_usd / size_usd if size_usd > 0 else -1.0
@@ -130,11 +127,18 @@ async def _netev_gate(
     passed = netev_usd >= min_usd and netev_roi >= min_roi
     payload = {
         "passed": passed,
+        "gate_failure_reason": None if passed else "netev_below_threshold",
         "expected_move": round(expected_move, 6),
         "derived_from_outcomes": derived_move is not None,
         "size_usd": round(size_usd, 6),
         "gross_profit_usd": round(gross_profit_usd, 6),
         "gas_cost_usd": round(gas_cost_usd, 6),
+        "gas_cost_source": gas_breakdown.get("source"),
+        "native_price_usd": gas_breakdown.get("native_price_usd"),
+        "gas_used": gas_breakdown.get("gas_used"),
+        "effective_gas_price_wei": gas_breakdown.get("effective_gas_price_wei"),
+        "avg_gas_usd_1h": gas_breakdown.get("avg_gas_usd_1h"),
+        "p95_gas_usd_1h": gas_breakdown.get("p95_gas_usd_1h"),
         "slippage_cost_usd": round(slippage_cost_usd, 6),
         "netev_usd": round(netev_usd, 6),
         "netev_roi": round(netev_roi, 6),
@@ -222,12 +226,11 @@ async def run_once() -> int:
             )
             if not netev_passed:
                 logger.info(
-                    "alert_skip_netev chain=%s wallet=%s token=%s netev_usd=%.2f netev_roi=%.4f",
+                    "alert_skip_netev chain=%s wallet=%s token=%s netev=%s",
                     trade.chain,
                     trade.wallet_address,
                     trade.token_address,
-                    netev.get("netev_usd", 0.0),
-                    netev.get("netev_roi", 0.0),
+                    netev,
                 )
                 continue
 
