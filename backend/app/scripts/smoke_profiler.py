@@ -1,5 +1,5 @@
 import asyncio
-import uuid
+from app.utils import random_evm_address
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -10,8 +10,8 @@ from app.worker_profiler import run_once
 
 
 async def main() -> None:
-    wallet_address = f"0x{uuid.uuid4().hex[:40]}"
-    token_address = f"0x{uuid.uuid4().hex[:40]}"
+    wallet_address = random_evm_address()
+    token_address = random_evm_address()
     base_time = datetime.utcnow() - timedelta(hours=1)
 
     trades = [

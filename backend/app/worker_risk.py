@@ -68,7 +68,9 @@ def _safe_float(value: Any) -> float | None:
 def _normalize_address(value: Any) -> str | None:
     if not value:
         return None
-    return str(value).lower()
+    from app.utils import normalize_evm_address
+
+    return normalize_evm_address(value)
 
 
 def _get_cached(cache: dict[str, tuple[float, dict[str, Any]]], key: str, ttl: int) -> dict[str, Any] | None:

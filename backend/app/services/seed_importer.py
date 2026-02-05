@@ -41,7 +41,9 @@ def _normalize_address(value: str | None) -> str | None:
     cleaned = _clean_value(value)
     if cleaned is None:
         return None
-    return cleaned.lower()
+    from app.utils import normalize_evm_address
+
+    return normalize_evm_address(cleaned)
 
 
 def resolve_seed_pack_paths(base_dir: Path | None = None) -> SeedPackPaths:

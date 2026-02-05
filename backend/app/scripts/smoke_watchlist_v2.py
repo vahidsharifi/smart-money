@@ -1,5 +1,5 @@
 import asyncio
-import uuid
+from app.utils import random_evm_address
 from datetime import datetime, timedelta
 
 from redis.asyncio import Redis
@@ -14,7 +14,7 @@ from app.worker_watchlist_autopilot import _apply_churn_control
 
 
 def _sample_address() -> str:
-    return f"0x{uuid.uuid4().hex}{uuid.uuid4().hex}"[:42]
+    return random_evm_address()
 
 
 async def _seed(chain: str, cap: int) -> None:

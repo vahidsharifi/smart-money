@@ -24,6 +24,7 @@ from app.utils import (
     install_shutdown_handlers,
     publish_to_stream,
     retry_or_dead_letter,
+    normalize_evm_address,
 )
 from app.utils.wallets import is_wallet_ignored
 
@@ -264,7 +265,7 @@ async def decode_raw_event(redis: Redis, fields: dict[str, Any]) -> dict[str, An
     tx_hash = fields.get("txHash") or fields.get("tx_hash")
     log_index = _parse_int(fields.get("logIndex") or fields.get("log_index"))
     block_number = _parse_int(fields.get("blockNumber") or fields.get("block_number"))
-    address = str(fields.get("address") or "").lower() or None
+    address = normalize_evm_address(fields.get("address"))
     topics = [topic.lower() for topic in _parse_topics(fields.get("topics"))]
     data = fields.get("data", "")
 
@@ -279,7 +280,7 @@ async def decode_raw_event(redis: Redis, fields: dict[str, Any]) -> dict[str, An
     decode_confidence = 0.0
 
     topic0 = topics[0] if topics else None
-    registry_entry = lookup_dex(chain, address)
+    registry_entry = lookup_dex(chain, address) if address else None
 
     if registry_entry and topic0 in (UNISWAP_V2_SWAP_TOPIC, UNISWAP_V3_SWAP_TOPIC):
         dex = registry_entry.dex

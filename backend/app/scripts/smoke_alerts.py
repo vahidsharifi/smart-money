@@ -1,5 +1,5 @@
 import asyncio
-import uuid
+from app.utils import random_evm_address
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -11,10 +11,10 @@ from app.worker_alerts import run_once
 
 
 async def main() -> None:
-    wallet_address = f"0x{uuid.uuid4().hex[:40]}"
-    token_address = f"0x{uuid.uuid4().hex[:40]}"
+    wallet_address = random_evm_address()
+    token_address = random_evm_address()
     tx_hash = "0x" + "d" * 64
-    seed_wallet = f"0x{uuid.uuid4().hex[:40]}"
+    seed_wallet = random_evm_address()
 
     async with async_session() as session:
         session.add(

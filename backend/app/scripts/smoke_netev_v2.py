@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from app.utils import random_evm_address
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
@@ -28,10 +29,10 @@ async def _reset_rows(
 
 
 async def main() -> None:
-    wallet = f"0x{uuid.uuid4().hex[:40]}".lower()
-    token_fail = f"0x{uuid.uuid4().hex[:40]}".lower()
-    token_pass = f"0x{uuid.uuid4().hex[:40]}".lower()
-    seed_wallet = f"0x{uuid.uuid4().hex[:40]}".lower()
+    wallet = random_evm_address()
+    token_fail = random_evm_address()
+    token_pass = random_evm_address()
+    seed_wallet = random_evm_address()
     tx_fail = "0x" + uuid.uuid4().hex * 2
     tx_pass = "0x" + uuid.uuid4().hex * 2
 

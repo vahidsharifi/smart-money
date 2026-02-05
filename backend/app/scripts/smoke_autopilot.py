@@ -1,5 +1,5 @@
 import asyncio
-import uuid
+from app.utils import random_evm_address
 from datetime import datetime, timedelta
 
 from redis.asyncio import Redis
@@ -13,7 +13,7 @@ from app.worker_watchlist_autopilot import run_autopilot_once
 
 
 def _sample_address() -> str:
-    return f"0x{uuid.uuid4().hex[:40]}"
+    return random_evm_address()
 
 
 async def _count_watch_pairs() -> int:

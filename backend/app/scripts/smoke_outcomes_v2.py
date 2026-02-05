@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from app.utils import random_evm_address
 from datetime import datetime, timedelta
 
 from sqlalchemy import delete, select
@@ -19,9 +20,9 @@ async def _cleanup(session, *, wallet: str, token: str, tx_hashes: list[str]) ->
 
 async def main() -> None:
     now = datetime.utcnow()
-    wallet = f"0x{uuid.uuid4().hex[:40]}"
-    token = f"0x{uuid.uuid4().hex[:40]}"
-    pair = f"0x{uuid.uuid4().hex[:40]}"
+    wallet = random_evm_address()
+    token = random_evm_address()
+    pair = random_evm_address()
     tx_hashes = ["0x" + uuid.uuid4().hex * 2 for _ in range(4)]
 
     alert_time = now - timedelta(hours=7)

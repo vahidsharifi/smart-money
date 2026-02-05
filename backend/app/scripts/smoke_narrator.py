@@ -1,5 +1,5 @@
 import asyncio
-import uuid
+from app.utils import random_evm_address
 from datetime import datetime
 
 from sqlalchemy import select
@@ -10,8 +10,8 @@ from app.narrator import narrate_alert
 
 
 async def main() -> None:
-    wallet_address = f"0x{uuid.uuid4().hex[:40]}"
-    token_address = f"0x{uuid.uuid4().hex[:40]}"
+    wallet_address = random_evm_address()
+    token_address = random_evm_address()
     reasons = {
         "tss": 7.2,
         "conviction": 62.5,

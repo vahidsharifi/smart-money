@@ -1,5 +1,5 @@
 import asyncio
-import uuid
+from app.utils import random_evm_address
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -22,10 +22,10 @@ async def _reset_rows(session, *, wallets: list[str], token: str) -> None:
 
 
 async def main() -> None:
-    token = f"0x{uuid.uuid4().hex[:40]}".lower()
-    wallet_a = f"0x{uuid.uuid4().hex[:40]}".lower()
-    wallet_b = f"0x{uuid.uuid4().hex[:40]}".lower()
-    wallet_c = f"0x{uuid.uuid4().hex[:40]}".lower()
+    token = random_evm_address()
+    wallet_a = random_evm_address()
+    wallet_b = random_evm_address()
+    wallet_c = random_evm_address()
     wallets = [wallet_a, wallet_b, wallet_c]
 
     now = datetime.utcnow()

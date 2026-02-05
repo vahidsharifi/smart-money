@@ -1,3 +1,4 @@
+from .addresses import is_valid_evm_address, normalize_evm_address, random_evm_address
 from .http_client import HttpClient, RetryConfig
 from .redis_helpers import (
     acknowledge_message,
@@ -20,6 +21,9 @@ from .streams import (
 )
 
 __all__ = [
+    "is_valid_evm_address",
+    "normalize_evm_address",
+    "random_evm_address",
     "HttpClient",
     "RetryConfig",
     "acknowledge_message",
