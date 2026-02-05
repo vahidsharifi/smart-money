@@ -6,12 +6,22 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy import delete, select
 
 from app.db import async_session
-from app.models import Alert, TokenRisk, Trade, WalletMetric
+from app.models import Alert, SignalOutcome, TokenRisk, Trade, WalletMetric
 from app.worker_alerts import _netev_gate, run_once as run_alerts_once
 
 
-async def _reset_rows(session, *, wallet: str, token_fail: str, token_pass: str, tx_fail: str, tx_pass: str) -> None:
-    await session.execute(delete(Alert).where(Alert.wallet_address == wallet))
+async def _reset_rows(
+    session,
+    *,
+    wallet: str,
+    seed_wallet: str,
+    token_fail: str,
+    token_pass: str,
+    tx_fail: str,
+    tx_pass: str,
+) -> None:
+    await session.execute(delete(SignalOutcome).where(SignalOutcome.alert_id.in_(select(Alert.id).where(Alert.wallet_address.in_([wallet, seed_wallet])))))
+    await session.execute(delete(Alert).where(Alert.wallet_address.in_([wallet, seed_wallet])))
     await session.execute(delete(Trade).where(Trade.wallet_address == wallet))
     await session.execute(delete(TokenRisk).where(TokenRisk.address.in_([token_fail, token_pass])))
     await session.execute(delete(WalletMetric).where(WalletMetric.wallet_address == wallet))
@@ -21,6 +31,7 @@ async def main() -> None:
     wallet = f"0x{uuid.uuid4().hex[:40]}".lower()
     token_fail = f"0x{uuid.uuid4().hex[:40]}".lower()
     token_pass = f"0x{uuid.uuid4().hex[:40]}".lower()
+    seed_wallet = f"0x{uuid.uuid4().hex[:40]}".lower()
     tx_fail = "0x" + uuid.uuid4().hex * 2
     tx_pass = "0x" + uuid.uuid4().hex * 2
 
@@ -28,6 +39,7 @@ async def main() -> None:
         await _reset_rows(
             session,
             wallet=wallet,
+            seed_wallet=seed_wallet,
             token_fail=token_fail,
             token_pass=token_pass,
             tx_fail=tx_fail,
@@ -58,6 +70,31 @@ async def main() -> None:
                 score=85.0,
                 components={"tss": {"score": 85.0}},
                 updated_at=datetime.utcnow(),
+            )
+        )
+        seed_alert = Alert(
+            chain="ethereum",
+            wallet_address=seed_wallet,
+            token_address=token_pass,
+            alert_type="trade_conviction",
+            tss=75.0,
+            conviction=55.0,
+            reasons={"seed": True},
+            narrative="seed",
+            created_at=datetime.utcnow(),
+        )
+        session.add(seed_alert)
+        await session.flush()
+        session.add(
+            SignalOutcome(
+                alert_id=seed_alert.id,
+                horizon_minutes=360,
+                was_sellable_entire_window=True,
+                tradeable_peak_gain=0.20,
+                tradeable_drawdown=-0.05,
+                net_tradeable_return_est=0.15,
+                trap_flag=False,
+                evaluated_at=datetime.utcnow(),
             )
         )
         await session.merge(
