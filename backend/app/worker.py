@@ -10,7 +10,8 @@ from app.db import async_session
 from app.logging import configure_logging
 from app.models import ScoreRecord
 from app.scoring import deterministic_score
-from app.services import fetch_dexscreener, fetch_goplus
+from app.services import close_http_client, fetch_dexscreener, fetch_goplus
+from app.utils import install_shutdown_handlers
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -58,28 +59,34 @@ async def run_worker() -> None:
 
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     await ensure_group(redis)
-    async with async_session() as session:
-        while True:
-            try:
-                response = await redis.xreadgroup(
-                    GROUP_NAME,
-                    CONSUMER_NAME,
-                    streams={STREAM_NAME: ">"},
-                    count=1,
-                    block=5000,
-                )
-                if not response:
-                    continue
-                _, entries = response[0]
-                for message_id, fields in entries:
-                    try:
-                        await handle_job(redis, session, fields)
-                        await redis.xack(STREAM_NAME, GROUP_NAME, message_id)
-                    except Exception as exc:
-                        logger.exception("job_failed", extra={"error": str(exc)})
-            except Exception as exc:
-                logger.exception("worker_loop_failed", extra={"error": str(exc)})
-                await asyncio.sleep(2)
+    stop_event = asyncio.Event()
+    install_shutdown_handlers(stop_event, logger)
+    try:
+        async with async_session() as session:
+            while not stop_event.is_set():
+                try:
+                    response = await redis.xreadgroup(
+                        GROUP_NAME,
+                        CONSUMER_NAME,
+                        streams={STREAM_NAME: ">"},
+                        count=1,
+                        block=5000,
+                    )
+                    if not response:
+                        continue
+                    _, entries = response[0]
+                    for message_id, fields in entries:
+                        try:
+                            await handle_job(redis, session, fields)
+                            await redis.xack(STREAM_NAME, GROUP_NAME, message_id)
+                        except Exception as exc:
+                            logger.exception("job_failed", extra={"error": str(exc)})
+                except Exception as exc:
+                    logger.exception("worker_loop_failed", extra={"error": str(exc)})
+                    await asyncio.sleep(2)
+    finally:
+        await redis.close()
+        await close_http_client()
 
 
 if __name__ == "__main__":

@@ -14,11 +14,13 @@ from app.models import Trade
 from app.utils import (
     STREAM_DECODED_TRADES,
     STREAM_RAW_EVENTS,
+    STREAM_RAW_EVENTS_DEAD,
     acknowledge_message,
     consume_from_stream,
     ensure_consumer_group,
     publish_to_stream,
     retry_or_dead_letter,
+    install_shutdown_handlers,
 )
 
 configure_logging()
@@ -269,6 +271,7 @@ async def process_batch(
                 group=GROUP_NAME,
                 message_id=message_id,
                 fields=fields,
+                dead_letter_stream=STREAM_RAW_EVENTS_DEAD,
             )
     return len(messages)
 
@@ -278,12 +281,17 @@ async def run_worker() -> None:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     await ensure_consumer_group(redis, stream=STREAM_RAW_EVENTS, group=GROUP_NAME)
     logger.info("decoder_started")
+    stop_event = asyncio.Event()
+    install_shutdown_handlers(stop_event, logger)
     try:
         async with async_session() as session:
-            while True:
+            while not stop_event.is_set():
                 processed = await process_batch(redis, session)
                 if processed == 0:
-                    await asyncio.sleep(1)
+                    try:
+                        await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
     finally:
         await redis.close()
 

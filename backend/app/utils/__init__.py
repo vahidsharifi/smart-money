@@ -9,9 +9,11 @@ from .redis_helpers import (
     retry_or_dead_letter,
 )
 from .settings import ChainSettings, Settings, settings
+from .shutdown import install_shutdown_handlers
 from .streams import (
     STREAM_ALERT_JOBS,
     STREAM_DECODED_TRADES,
+    STREAM_RAW_EVENTS_DEAD,
     STREAM_PROFILE_JOBS,
     STREAM_RAW_EVENTS,
     STREAM_RISK_JOBS,
@@ -30,8 +32,10 @@ __all__ = [
     "ChainSettings",
     "Settings",
     "settings",
+    "install_shutdown_handlers",
     "STREAM_ALERT_JOBS",
     "STREAM_DECODED_TRADES",
+    "STREAM_RAW_EVENTS_DEAD",
     "STREAM_PROFILE_JOBS",
     "STREAM_RAW_EVENTS",
     "STREAM_RISK_JOBS",
