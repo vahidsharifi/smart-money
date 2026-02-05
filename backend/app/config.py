@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     autopilot_max_pairs_per_chain: int = Field(
         200, validation_alias="AUTOPILOT_MAX_PAIRS_PER_CHAIN"
     )
+    max_watch_pairs_eth: int = Field(200, validation_alias="MAX_WATCH_PAIRS_ETH")
+    max_watch_pairs_bsc: int = Field(200, validation_alias="MAX_WATCH_PAIRS_BSC")
+    autopilot_near_expiry_minutes: int = Field(20, validation_alias="AUTOPILOT_NEAR_EXPIRY_MINUTES")
     autopilot_min_sleep_seconds: int = Field(
         600, validation_alias="AUTOPILOT_MIN_SLEEP_SECONDS"
     )
@@ -119,3 +122,9 @@ def validate_chain_config() -> None:
             raise RuntimeError(
                 f"CHAIN_CONFIG for {chain_name} must include rpc_http or rpc_ws"
             )
+
+
+def watch_pairs_cap_for_chain(chain: str) -> int:
+    if chain == "bsc":
+        return settings.max_watch_pairs_bsc
+    return settings.max_watch_pairs_eth

@@ -55,6 +55,7 @@ class WatchPair(Base):
     __table_args__ = (
         Index("ix_watch_pairs_chain_expires_at", "chain", "expires_at"),
         Index("ix_watch_pairs_chain_priority", "chain", "priority"),
+        Index("ix_watch_pairs_chain_score", "chain", "score"),
         Index("ix_watch_pairs_last_seen", "last_seen"),
     )
 
@@ -67,6 +68,8 @@ class WatchPair(Base):
     token1_address: Mapped[str | None] = mapped_column(String(128))
     source: Mapped[str] = mapped_column(String(32))
     priority: Mapped[int] = mapped_column(Integer, default=0)
+    score: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0"))
+    reason: Mapped[dict | None] = mapped_column(JSONB)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime)
 
