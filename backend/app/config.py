@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     ollama_url: str = "http://ollama:11434"
+    ollama_model: str = "llama3.1"
     alchemy_ws_url: str | None = None
     alchemy_http_url: str | None = None
     bsc_ws_url: str | None = None

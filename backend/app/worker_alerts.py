@@ -10,6 +10,7 @@ from app.config import settings, validate_chain_config
 from app.db import async_session
 from app.logging import configure_logging
 from app.models import Alert, TokenRisk, Trade, WalletMetric
+from app.narrator import narrate_alert
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -135,6 +136,7 @@ async def run_once() -> int:
                     "block_time": trade.block_time.isoformat() if trade.block_time else None,
                 },
             }
+            narrative = await narrate_alert(reasons)
             session.add(
                 Alert(
                     chain=trade.chain,
@@ -142,6 +144,7 @@ async def run_once() -> int:
                     token_address=trade.token_address,
                     alert_type=ALERT_TYPE,
                     reasons=reasons,
+                    narrative=narrative,
                     created_at=datetime.utcnow(),
                 )
             )
