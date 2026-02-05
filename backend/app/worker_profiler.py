@@ -11,6 +11,7 @@ from app.config import settings, validate_chain_config
 from app.db import async_session
 from app.logging import configure_logging
 from app.models import Alert, Position, Trade, WalletMetric
+from app.narrator import narrate_alert
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -172,13 +173,16 @@ async def _maybe_create_tier_alert(
     existing = result.scalar_one_or_none()
     if existing and existing.reasons.get("tier") == tier:
         return
+    reasons = {"tier": tier, "total_value": total_value}
+    narrative = await narrate_alert(reasons)
     session.add(
         Alert(
             chain=chain,
             wallet_address=wallet_address,
             token_address=None,
             alert_type="wallet_tier",
-            reasons={"tier": tier, "total_value": total_value},
+            reasons=reasons,
+            narrative=narrative,
             created_at=datetime.utcnow(),
         )
     )

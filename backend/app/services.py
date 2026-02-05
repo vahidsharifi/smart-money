@@ -73,7 +73,7 @@ async def narrate_with_ollama(reasons: list[dict[str, Any]]) -> str:
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(
                 f"{settings.ollama_url}/api/generate",
-                json={"model": "llama3", "prompt": prompt, "stream": False},
+                json={"model": settings.ollama_model, "prompt": prompt, "stream": False},
             )
             response.raise_for_status()
             payload = response.json()
