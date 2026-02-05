@@ -172,3 +172,23 @@ class SignalOutcome(Base):
     net_tradeable_return_est: Mapped[Decimal | None] = mapped_column(Numeric)
     trap_flag: Mapped[bool | None] = mapped_column(Boolean)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GasCostObservation(Base):
+    __tablename__ = "gas_cost_observations"
+    __table_args__ = (Index("ix_gas_cost_observations_observed_at", "observed_at"),)
+
+    chain: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tx_hash: Mapped[str] = mapped_column(String(128), primary_key=True)
+    gas_cost_usd: Mapped[float] = mapped_column(Float)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ChainGasEstimate(Base):
+    __tablename__ = "chain_gas_estimates"
+
+    chain: Mapped[str] = mapped_column(String(32), primary_key=True)
+    avg_gas_usd_1h: Mapped[float | None] = mapped_column(Float)
+    p95_gas_usd_1h: Mapped[float | None] = mapped_column(Float)
+    samples_1h: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
