@@ -1,4 +1,4 @@
-.PHONY: up down logs rebuild migrate reset_db api-shell smoke smoke_db smoke_redis smoke_listener smoke_decoder smoke_risk smoke_profiler smoke_alerts smoke_narrator smoke_api
+.PHONY: up down logs rebuild migrate reset_db api-shell seed_import smoke smoke_db smoke_redis smoke_listener smoke_decoder smoke_risk smoke_profiler smoke_alerts smoke_narrator smoke_api
 
 up:
 	docker compose up --build
@@ -21,6 +21,9 @@ reset_db:
 
 api-shell:
 	docker compose exec api bash
+
+seed_import:
+	docker compose exec -T api python -m app.services.seed_importer
 
 smoke_db:
 	docker compose exec -T api python -m app.scripts.smoke_db

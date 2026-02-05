@@ -22,6 +22,7 @@ from app.utils import (
     retry_or_dead_letter,
     install_shutdown_handlers,
 )
+from app.utils.wallets import is_wallet_ignored
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -229,6 +230,16 @@ async def handle_message(redis: Redis, session: Any, fields: dict[str, Any]) -> 
     record = decode_raw_event(fields)
     if not record["tx_hash"]:
         raise ValueError("missing tx_hash")
+    if record.get("wallet_address") and await is_wallet_ignored(
+        session, chain=record["chain"], wallet_address=record["wallet_address"]
+    ):
+        logger.info(
+            "decoder_skipped_ignored_wallet chain=%s wallet=%s tx=%s",
+            record["chain"],
+            record["wallet_address"],
+            record["tx_hash"],
+        )
+        return
     trade = Trade(**record)
     await session.merge(trade)
     await session.commit()

@@ -12,6 +12,7 @@ from app.logging import configure_logging
 from app.models import Alert, TokenRisk, Trade, WalletMetric
 from app.narrator import narrate_alert
 from app.utils import install_shutdown_handlers
+from app.utils.wallets import is_wallet_ignored
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -69,6 +70,16 @@ async def run_once() -> int:
         for trade in trades:
             if not trade.wallet_address or not trade.token_address:
                 logger.debug("alert_skip_missing_wallet trade=%s", trade.tx_hash)
+                continue
+            if await is_wallet_ignored(
+                session, chain=trade.chain, wallet_address=trade.wallet_address
+            ):
+                logger.info(
+                    "alert_skip_ignored_wallet chain=%s wallet=%s trade=%s",
+                    trade.chain,
+                    trade.wallet_address,
+                    trade.tx_hash,
+                )
                 continue
 
             token_result = await session.execute(
