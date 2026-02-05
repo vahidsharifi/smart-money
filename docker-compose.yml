@@ -117,6 +117,19 @@ services:
       redis:
         condition: service_healthy
 
+  worker_watchlist_autopilot:
+    build: ./backend
+    command: python -m app.worker_watchlist_autopilot
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   frontend:
     build: ./frontend
     env_file: .env

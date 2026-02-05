@@ -116,8 +116,16 @@ curl "http://localhost:8000/regime"
 | `BSC_WS_URL` | BSC WebSocket endpoint | none |
 | `BSC_HTTP_URL` | BSC HTTP endpoint | none |
 | `CHAIN_CONFIG` | JSON map of chain settings | required |
-| `WATCHED_ADDRESSES_ETH` | Ethereum addresses to watch | none |
-| `WATCHED_ADDRESSES_BSC` | BSC addresses to watch | none |
+| `WATCHED_ADDRESSES_ETH` | (Deprecated) manual Ethereum addresses | none |
+| `WATCHED_ADDRESSES_BSC` | (Deprecated) manual BSC addresses | none |
+| `AUTOPILOT_LIQUIDITY_FLOOR_ETH` | Autopilot minimum liquidity (USD) for Ethereum pairs | `50000` |
+| `AUTOPILOT_LIQUIDITY_FLOOR_BSC` | Autopilot minimum liquidity (USD) for BSC pairs | `25000` |
+| `AUTOPILOT_VOLUME_FLOOR_24H` | Autopilot minimum 24h volume (USD) | `50000` |
+| `AUTOPILOT_MIN_AGE_HOURS` | Autopilot minimum pair age when DexScreener reports creation time | `1.0` |
+| `AUTOPILOT_AGE_FALLBACK_MULTIPLIER` | Multiplier applied to liquidity/volume floors when age is unknown | `1.5` |
+| `AUTOPILOT_MAX_PAIRS_PER_CHAIN` | Max active autopilot watch pairs per chain | `200` |
+| `AUTOPILOT_MIN_SLEEP_SECONDS` | Autopilot minimum sleep between runs | `600` |
+| `AUTOPILOT_MAX_SLEEP_SECONDS` | Autopilot maximum sleep between runs | `1800` |
 | `DEXSCREENER_BASE_URL` | DexScreener API | `https://api.dexscreener.com/latest/dex` |
 | `GOPLUS_BASE_URL` | GoPlus API | `https://api.gopluslabs.io/api/v1` |
 | `LOG_LEVEL` | Log level | `info` |
@@ -150,13 +158,13 @@ redis-cli XADD score_jobs * token_address 0x000000000000000000000000000000000000
 
 ## Watching addresses for EVM logs
 
-The EVM listener only subscribes to explicit watch lists. Provide comma-separated
-addresses (or a JSON array) per chain in your `.env`:
+The EVM listener subscribes to **active** watch pairs stored in Postgres. Those
+pairs are populated by the seed pack (`watch_pairs` source = `seed_pack`) and by
+the watchlist autopilot worker (`source=autopilot`). The listener snapshots the
+active watch set (TTL + seed pack anchors) via Redis to avoid DB thrash.
 
-```bash
-WATCHED_ADDRESSES_ETH=0xabc...,0xdef...
-WATCHED_ADDRESSES_BSC=["0x123...", "0x456..."]
-```
+To tune the autopilot, adjust the `AUTOPILOT_*` environment variables and the
+per-chain caps/floors in `.env`.
 
 ## Smoke tests
 
@@ -179,6 +187,7 @@ You can also run the backend API smoke script after seeding alerts:
 ```bash
 docker compose exec api python -m app.scripts.smoke_alerts
 docker compose exec api python -m app.scripts.smoke_api
+docker compose exec api python -m app.scripts.smoke_autopilot
 ```
 
 ## Troubleshooting

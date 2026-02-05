@@ -32,6 +32,30 @@ class Settings(BaseSettings):
     watched_addresses_bsc: list[str] = Field(
         default_factory=list, validation_alias="WATCHED_ADDRESSES_BSC"
     )
+    autopilot_liquidity_floor_eth: float = Field(
+        50_000, validation_alias="AUTOPILOT_LIQUIDITY_FLOOR_ETH"
+    )
+    autopilot_liquidity_floor_bsc: float = Field(
+        25_000, validation_alias="AUTOPILOT_LIQUIDITY_FLOOR_BSC"
+    )
+    autopilot_volume_floor_24h: float = Field(
+        50_000, validation_alias="AUTOPILOT_VOLUME_FLOOR_24H"
+    )
+    autopilot_min_age_hours: float = Field(
+        1.0, validation_alias="AUTOPILOT_MIN_AGE_HOURS"
+    )
+    autopilot_age_fallback_multiplier: float = Field(
+        1.5, validation_alias="AUTOPILOT_AGE_FALLBACK_MULTIPLIER"
+    )
+    autopilot_max_pairs_per_chain: int = Field(
+        200, validation_alias="AUTOPILOT_MAX_PAIRS_PER_CHAIN"
+    )
+    autopilot_min_sleep_seconds: int = Field(
+        600, validation_alias="AUTOPILOT_MIN_SLEEP_SECONDS"
+    )
+    autopilot_max_sleep_seconds: int = Field(
+        1800, validation_alias="AUTOPILOT_MAX_SLEEP_SECONDS"
+    )
     tier_ocean_threshold: float = Field(1_000_000, validation_alias="TIER_OCEAN_THRESHOLD")
     tier_shadow_threshold: float = Field(100_000, validation_alias="TIER_SHADOW_THRESHOLD")
     tier_titan_threshold: float = Field(10_000, validation_alias="TIER_TITAN_THRESHOLD")
