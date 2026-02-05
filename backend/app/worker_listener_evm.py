@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 from app.config import settings, validate_chain_config
 from app.logging import configure_logging
 from app.services.watch_pairs import get_watch_pairs_snapshot
+from app.utils.ops import start_heartbeat, stop_heartbeat
 from app.utils import STREAM_RAW_EVENTS, dedupe_with_ttl, install_shutdown_handlers, publish_to_stream
 
 configure_logging()
@@ -142,6 +143,7 @@ async def run_worker() -> None:
         "listener_started chains=%s",
         list(settings.chain_config.keys()),
     )
+    heartbeat_task = await start_heartbeat(redis, worker_name="listener-evm")
     stop_event = asyncio.Event()
     install_shutdown_handlers(stop_event, logger)
     try:
@@ -160,6 +162,7 @@ async def run_worker() -> None:
             )
         await asyncio.gather(*tasks)
     finally:
+        await stop_heartbeat(heartbeat_task)
         await redis.close()
 
 

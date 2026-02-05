@@ -12,6 +12,7 @@ from app.models import ScoreRecord
 from app.scoring import deterministic_score
 from app.services import close_http_client, fetch_dexscreener, fetch_goplus
 from app.utils import install_shutdown_handlers
+from app.utils.ops import start_heartbeat, stop_heartbeat
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ async def run_worker() -> None:
     validate_chain_config()
 
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    heartbeat_task = await start_heartbeat(redis, worker_name=CONSUMER_NAME)
     await ensure_group(redis)
     stop_event = asyncio.Event()
     install_shutdown_handlers(stop_event, logger)
@@ -85,6 +87,7 @@ async def run_worker() -> None:
                     logger.exception("worker_loop_failed", extra={"error": str(exc)})
                     await asyncio.sleep(2)
     finally:
+        await stop_heartbeat(heartbeat_task)
         await redis.close()
         await close_http_client()
 

@@ -14,7 +14,8 @@ export default function Home() {
         </p>
       </header>
 
-      <section className="grid gap-6">
+      <section className="grid gap-3">
+        <div className="space-x-4 text-sm"><a className="underline" href="/outcomes">Outcomes</a><a className="underline" href="/tuning">Tuning</a></div>
         <LiveFeed />
       </section>
 
