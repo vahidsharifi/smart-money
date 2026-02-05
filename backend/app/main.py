@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import datetime
 import time
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -34,6 +35,8 @@ from app.schemas import (
 )
 from app.scoring import deterministic_score
 from app.services import close_http_client, fetch_dexscreener, fetch_goplus, narrate_with_ollama
+from app.services.seed_importer import run_seed_import
+from app.services.watch_pairs import WATCH_PAIRS_SNAPSHOT_KEY
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -54,6 +57,19 @@ async def get_redis() -> Redis:
         yield redis
     finally:
         await redis.close()
+
+
+@app.on_event("startup")
+async def warm_start_seed_pack() -> None:
+    try:
+        await run_seed_import(base_dir=Path("/app/seed_pack"))
+        redis = Redis.from_url(settings.redis_url, decode_responses=True)
+        try:
+            await redis.delete(WATCH_PAIRS_SNAPSHOT_KEY)
+        finally:
+            await redis.close()
+    except Exception:
+        logger.exception("seed_pack_warm_start_failed")
 
 
 

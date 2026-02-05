@@ -12,7 +12,7 @@ from app.config import settings, validate_chain_config
 from app.cost_model import estimate_trade_gas_cost
 from app.db import async_session
 from app.logging import configure_logging
-from app.models import Alert, SignalOutcome, TokenRisk, Trade, WalletMetric
+from app.models import Alert, SignalOutcome, TokenRisk, Trade, WalletMetric, WatchPair
 from app.narrator import narrate_alert
 from app.utils.ops import start_heartbeat, stop_heartbeat
 from app.utils import install_shutdown_handlers
@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 ALERT_TYPE = "trade_conviction"
 COOLDOWN_MINUTES = 60
 LOOKBACK_HOURS = 24
+POOL_ALERT_TYPE = "pool_activity"
+POOL_ALERT_USD_SCALE = 100_000.0
 
 
 def _tier_for_value(total_value: float | None) -> str:
@@ -42,6 +44,13 @@ def _calculate_conviction(*, tss_score: float, total_value: float | None) -> flo
     wallet_value = total_value or 0.0
     wallet_ratio = min(wallet_value / settings.tier_titan_threshold, 1.0)
     conviction = (tss_score / 100.0) * 60.0 + wallet_ratio * 40.0
+    return round(conviction, 2)
+
+
+def _calculate_pool_conviction(*, tss_score: float, usd_value: float | None) -> float:
+    size_usd = max(float(usd_value or 0.0), 0.0)
+    size_score = min(size_usd / POOL_ALERT_USD_SCALE, 1.0)
+    conviction = (tss_score / 100.0) * 50.0 + size_score * 50.0
     return round(conviction, 2)
 
 
@@ -95,6 +104,84 @@ async def _latest_alert(session, *, chain: str, wallet_address: str, token_addre
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _watch_pair_active(session, *, chain: str, pair_address: str, now: datetime) -> bool:
+    result = await session.execute(
+        select(WatchPair)
+        .where(
+            WatchPair.chain == chain,
+            WatchPair.pair_address == pair_address,
+            WatchPair.expires_at > now,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def _emit_pool_alert(
+    session,
+    *,
+    trade: Trade,
+    token_risk: TokenRisk,
+    wallet_address: str,
+) -> bool:
+    latest = await _latest_alert(
+        session,
+        chain=trade.chain,
+        wallet_address=wallet_address,
+        token_address=trade.token_address or "",
+    )
+    if latest is not None:
+        cooldown_until = latest.created_at + timedelta(minutes=COOLDOWN_MINUTES)
+        if datetime.utcnow() < cooldown_until:
+            logger.debug(
+                "alert_skip_cooldown wallet=%s token=%s",
+                wallet_address,
+                trade.token_address,
+            )
+            return False
+
+    tss_score = 0.0
+    if isinstance(token_risk.components, dict):
+        tss_score = float(token_risk.components.get("tss", {}).get("score") or 0.0)
+    if token_risk.score is not None:
+        tss_score = float(token_risk.score)
+
+    conviction = _calculate_pool_conviction(
+        tss_score=tss_score,
+        usd_value=trade.usd_value,
+    )
+    reasons = {
+        "conviction": conviction,
+        "tss": tss_score,
+        "pool_address": trade.pair_address,
+        "trade": {
+            "tx_hash": trade.tx_hash,
+            "log_index": trade.log_index,
+            "side": trade.side,
+            "amount": trade.amount,
+            "price": trade.price,
+            "usd_value": trade.usd_value,
+            "block_time": trade.block_time.isoformat() if trade.block_time else None,
+        },
+        "source": "pool_watchlist",
+    }
+    narrative = await narrate_alert(reasons)
+    session.add(
+        Alert(
+            chain=trade.chain,
+            wallet_address=wallet_address,
+            token_address=trade.token_address,
+            alert_type=POOL_ALERT_TYPE,
+            tss=tss_score,
+            conviction=conviction,
+            reasons=reasons,
+            narrative=narrative,
+            created_at=datetime.utcnow(),
+        )
+    )
+    return True
 
 
 async def _netev_gate(
@@ -156,7 +243,7 @@ async def run_once() -> int:
     async with async_session() as session:
         trades_result = await session.execute(
             select(Trade)
-            .where(Trade.side == "BUY", Trade.created_at >= cutoff)
+            .where(func.lower(Trade.side) == "buy", Trade.created_at >= cutoff)
             .order_by(Trade.created_at.desc())
         )
         trades = trades_result.scalars().all()
@@ -165,16 +252,6 @@ async def run_once() -> int:
         for trade in trades:
             if not trade.wallet_address or not trade.token_address:
                 logger.debug("alert_skip_missing_wallet trade=%s", trade.tx_hash)
-                continue
-            if await is_wallet_ignored(
-                session, chain=trade.chain, wallet_address=trade.wallet_address
-            ):
-                logger.info(
-                    "alert_skip_ignored_wallet chain=%s wallet=%s trade=%s",
-                    trade.chain,
-                    trade.wallet_address,
-                    trade.tx_hash,
-                )
                 continue
 
             token_result = await session.execute(
@@ -187,6 +264,32 @@ async def run_once() -> int:
                 logger.debug("alert_skip_missing_token_risk token=%s", trade.token_address)
                 continue
 
+            now = datetime.utcnow()
+            watch_pair_active = False
+            if trade.pair_address:
+                watch_pair_active = await _watch_pair_active(
+                    session,
+                    chain=trade.chain,
+                    pair_address=trade.pair_address,
+                    now=now,
+                )
+
+            if watch_pair_active and not (trade.usd_value or 0):
+                alert_wallet_address = trade.wallet_address or trade.pair_address
+                if alert_wallet_address:
+                    created_pool = await _emit_pool_alert(
+                        session,
+                        trade=trade,
+                        token_risk=token_risk,
+                        wallet_address=alert_wallet_address,
+                    )
+                    if created_pool:
+                        created += 1
+                        continue
+
+            wallet_ignored = await is_wallet_ignored(
+                session, chain=trade.chain, wallet_address=trade.wallet_address
+            )
             metric_result = await session.execute(
                 select(WalletMetric)
                 .where(
@@ -196,8 +299,33 @@ async def run_once() -> int:
                 .limit(1)
             )
             wallet_metric = metric_result.scalar_one_or_none()
-            if wallet_metric is None:
-                logger.debug("alert_skip_missing_wallet_metrics wallet=%s", trade.wallet_address)
+
+            if wallet_metric is None or wallet_ignored:
+                if watch_pair_active:
+                    alert_wallet_address = trade.wallet_address or trade.pair_address
+                    if not alert_wallet_address:
+                        logger.debug("alert_skip_missing_wallet trade=%s", trade.tx_hash)
+                        continue
+                    created_pool = await _emit_pool_alert(
+                        session,
+                        trade=trade,
+                        token_risk=token_risk,
+                        wallet_address=alert_wallet_address,
+                    )
+                    if created_pool:
+                        created += 1
+                        continue
+                if wallet_metric is None:
+                    logger.debug(
+                        "alert_skip_missing_wallet_metrics wallet=%s", trade.wallet_address
+                    )
+                else:
+                    logger.info(
+                        "alert_skip_ignored_wallet chain=%s wallet=%s trade=%s",
+                        trade.chain,
+                        trade.wallet_address,
+                        trade.tx_hash,
+                    )
                 continue
 
             latest = await _latest_alert(
