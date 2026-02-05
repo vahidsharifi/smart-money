@@ -1,0 +1,6 @@
+chain,address,type,sources,date_observed,notes
+ethereum,0xBE0eB53F46cd790Cd13851d5EFf43D12404d33E8,CEX,https://etherscan.io/accounts ; https://etherscan.io/address/0xBE0eB53F46cd790Cd13851d5EFf43D12404d33E8,2026-02-05,Labelled 'Binance 7' on Etherscan Top Accounts list.
+ethereum,0xF977814e90dA44bFA03b6295A0616a897441aceC,CEX,https://etherscan.io/accounts ; https://etherscan.io/address/0xF977814e90dA44bFA03b6295A0616a897441aceC,2026-02-05,Labelled 'Binance: Hot Wallet 20' on Etherscan Top Accounts list.
+ethereum,0x40B38765696e3d5d8d9d834D8AaD4bB6e418E489,CEX,https://etherscan.io/accounts ; https://etherscan.io/address/0x40B38765696e3d5d8d9d834D8AaD4bB6e418E489,2026-02-05,Labelled 'Robinhood' on Etherscan Top Accounts list.
+ethereum,0x0E58e8998a34E4A770dA2Bf2C836b2E7E893d9BfCD,CEX,https://etherscan.io/accounts ; https://etherscan.io/address/0x0E58e8998a34E4A770dA2Bf2C836b2E7E893d9BfCD,2026-02-05,Labelled 'Upbit 41' on Etherscan Top Accounts list.
+ethereum,0x6088d94C5a40CEcd3ae2D4e0710cA687b91c61d0,router,https://etherscan.io/address/0x6088d94C5a40CEcd3ae2D4e0710cA687b91c61d0,2026-02-05,Labelled 'OKX: Dex Router 3' on Etherscan address page.
