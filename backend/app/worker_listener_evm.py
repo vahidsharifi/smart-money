@@ -10,6 +10,7 @@ from redis.asyncio import Redis
 
 from app.config import settings, validate_chain_config
 from app.logging import configure_logging
+from app.services.watch_pairs import get_watch_pairs_snapshot
 from app.utils import STREAM_RAW_EVENTS, dedupe_with_ttl, install_shutdown_handlers, publish_to_stream
 
 configure_logging()
@@ -21,11 +22,8 @@ RECONNECT_BASE_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 30.0
 
 
-def build_watchlist() -> dict[str, list[str]]:
-    return {
-        "ethereum": [address.lower() for address in settings.watched_addresses_eth],
-        "bsc": [address.lower() for address in settings.watched_addresses_bsc],
-    }
+async def build_watchlist(redis: Redis) -> dict[str, list[str]]:
+    return await get_watch_pairs_snapshot(redis)
 
 
 def get_ws_url(chain: str) -> str:
@@ -136,8 +134,8 @@ async def listen_chain(
 
 async def run_worker() -> None:
     validate_chain_config()
-    watchlist = build_watchlist()
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    watchlist = await build_watchlist(redis)
     logger.info(
         "listener_started chains=%s",
         list(settings.chain_config.keys()),
