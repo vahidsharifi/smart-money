@@ -88,6 +88,9 @@ class Trade(Base):
     amount: Mapped[float | None] = mapped_column(Float)
     price: Mapped[float | None] = mapped_column(Float)
     usd_value: Mapped[float | None] = mapped_column(Float)
+    dex: Mapped[str | None] = mapped_column(String(64))
+    pair_address: Mapped[str | None] = mapped_column(String(128))
+    decode_confidence: Mapped[float] = mapped_column(Float, default=0.0)
     block_time: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
