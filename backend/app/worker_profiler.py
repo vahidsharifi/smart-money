@@ -11,6 +11,7 @@ from app.config import settings, validate_chain_config
 from app.db import async_session
 from app.logging import configure_logging
 from app.models import Alert, Position, Trade, WalletMetric
+from app.services.merit import run_merit_update_once
 from app.narrator import narrate_alert
 from app.utils import install_shutdown_handlers
 from app.utils.wallets import is_wallet_ignored
@@ -241,8 +242,9 @@ async def run_once() -> int:
             )
             updates += 1
 
+        merit_updates = await run_merit_update_once(session)
         await session.commit()
-        return updates
+        return max(updates, merit_updates)
 
 
 async def run_worker(interval_seconds: int = 3600) -> None:

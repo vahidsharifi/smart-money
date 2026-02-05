@@ -90,6 +90,19 @@ Limitations:
 
 ### Wallet metadata additions
 - **wallets**: `source`, `prior_weight`, `merit_score`, `tier`, `tier_reason`, `ignore_reason` plus indexes on tier and merit score.
+- Merit learning only uses outcome rows that are fully tradeable quality samples:
+  - `was_sellable_entire_window = true`
+  - `trap_flag = false`
+  - `net_tradeable_return_est IS NOT NULL`
+- Tier evolution (Ocean→Shadow, Shadow→Titan, and seed decay) is driven by those filtered outcomes and recorded in `tier_reason` JSON with promotion/demotion rationale.
+
+### NetEV gate for entry alerts
+`worker_alerts` now applies a hard profit-after-cost gate before creating entry/accumulation alerts:
+- Computes conservative expected move (chain defaults, or derived from historical valid outcomes when available).
+- Subtracts chain-aware gas cost and estimated slippage cost.
+- Requires both minimum net USD profit and minimum post-cost ROI:
+  - Ethereum defaults: `min_usd_profit=20`, `min_roi_after_costs=0.08`
+  - BSC defaults: `min_usd_profit=6`, `min_roi_after_costs=0.05`
 
 ### View logs
 
@@ -203,6 +216,7 @@ docker compose exec api python -m app.scripts.smoke_alerts
 docker compose exec api python -m app.scripts.smoke_api
 docker compose exec api python -m app.scripts.smoke_autopilot
 docker compose exec api python -m app.scripts.smoke_outcomes
+docker compose exec api python -m app.scripts.smoke_merit_and_netev
 ```
 
 ## Troubleshooting
