@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import logging
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from app.config import settings
 from app.db import async_session
@@ -225,7 +226,7 @@ async def _price_series(
         select(Trade.block_time, Trade.price)
         .where(
             Trade.chain == chain,
-            or_(*filters),
+            *filters,
             Trade.block_time >= start,
             Trade.block_time <= end,
             Trade.decode_confidence >= 0.6,
@@ -266,18 +267,29 @@ def _exit_feasible_peak(
     if not prices:
         return None, None, False
 
-    eligible_times = {
-        snapshot_time
+    parsed_snapshots = sorted(
+        (
+            snapshot_time,
+            _is_exit_feasible_snapshot(snapshot),
+        )
         for snapshot in in_window_snapshots
-        if (snapshot_time := _parse_snapshot_time(snapshot)) is not None and _is_exit_feasible_snapshot(snapshot)
-    }
-    if not eligible_times:
+        if (snapshot_time := _parse_snapshot_time(snapshot)) is not None
+    )
+    if not parsed_snapshots:
+        return None, None, False
+
+    snapshot_times = [snapshot_time for snapshot_time, _ in parsed_snapshots]
+    if not any(is_feasible for _, is_feasible in parsed_snapshots):
         return None, None, False
 
     max_gain: float | None = None
     max_time: datetime | None = None
     for price_time, price in prices:
-        if price_time not in eligible_times:
+        nearest_index = bisect.bisect_right(snapshot_times, price_time) - 1
+        if nearest_index < 0:
+            continue
+        _, is_feasible = parsed_snapshots[nearest_index]
+        if not is_feasible:
             continue
         gain = price / entry_price - 1
         if max_gain is None or gain > max_gain:
