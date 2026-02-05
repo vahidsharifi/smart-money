@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from redis.asyncio import Redis
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -13,6 +15,7 @@ from app.config import settings
 from app.db import async_session
 from app.logging import configure_logging
 from app.models import Alert, SignalOutcome, TokenRisk, Trade
+from app.utils.ops import start_heartbeat, stop_heartbeat
 from app.utils import HttpClient, install_shutdown_handlers
 
 configure_logging()
@@ -428,17 +431,24 @@ async def run_outcome_evaluator_once() -> int:
 
 
 async def run_worker() -> None:
+    validate_chain_config()
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    heartbeat_task = await start_heartbeat(redis, worker_name="outcome-evaluator")
     stop_event = asyncio.Event()
     install_shutdown_handlers(stop_event, logger)
-    while not stop_event.is_set():
-        try:
-            await run_outcome_evaluator_once()
-        except Exception:
-            logger.exception("outcome_evaluator_iteration_failed")
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=RUN_INTERVAL_SECONDS)
-        except asyncio.TimeoutError:
-            continue
+    try:
+        while not stop_event.is_set():
+            try:
+                await run_outcome_evaluator_once()
+            except Exception:
+                logger.exception("outcome_evaluator_iteration_failed")
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=RUN_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                continue
+    finally:
+        await stop_heartbeat(heartbeat_task)
+        await redis.close()
 
 
 if __name__ == "__main__":

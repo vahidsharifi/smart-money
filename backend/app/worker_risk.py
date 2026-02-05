@@ -12,6 +12,7 @@ from app.config import settings, validate_chain_config
 from app.db import async_session
 from app.logging import configure_logging
 from app.models import TokenRisk
+from app.utils.ops import start_heartbeat, stop_heartbeat
 from app.utils import (
     HttpClient,
     STREAM_DECODED_TRADES,
@@ -353,6 +354,7 @@ async def run_worker() -> None:
     await ensure_consumer_group(redis, stream=STREAM_DECODED_TRADES, group=DECODED_GROUP)
     await ensure_consumer_group(redis, stream=STREAM_RISK_JOBS, group=RISK_GROUP)
     logger.info("risk_worker_started")
+    heartbeat_task = await start_heartbeat(redis, worker_name=RISK_CONSUMER)
     stop_event = asyncio.Event()
     install_shutdown_handlers(stop_event, logger)
     try:
@@ -367,6 +369,7 @@ async def run_worker() -> None:
                         except asyncio.TimeoutError:
                             continue
     finally:
+        await stop_heartbeat(heartbeat_task)
         await redis.close()
 
 

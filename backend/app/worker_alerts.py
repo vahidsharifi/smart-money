@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from redis.asyncio import Redis
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
@@ -12,6 +14,7 @@ from app.db import async_session
 from app.logging import configure_logging
 from app.models import Alert, SignalOutcome, TokenRisk, Trade, WalletMetric
 from app.narrator import narrate_alert
+from app.utils.ops import start_heartbeat, stop_heartbeat
 from app.utils import install_shutdown_handlers
 from app.utils.wallets import is_wallet_ignored
 
@@ -279,15 +282,21 @@ async def run_once() -> int:
 async def run_worker(interval_seconds: int = 60) -> None:
     validate_chain_config()
     logger.info("alerts_worker_started")
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    heartbeat_task = await start_heartbeat(redis, worker_name="alerts-worker")
     stop_event = asyncio.Event()
     install_shutdown_handlers(stop_event, logger)
-    while not stop_event.is_set():
-        created = await run_once()
-        logger.info("alerts_worker_cycle alerts=%s", created)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
-        except asyncio.TimeoutError:
-            continue
+    try:
+        while not stop_event.is_set():
+            created = await run_once()
+            logger.info("alerts_worker_cycle alerts=%s", created)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+            except asyncio.TimeoutError:
+                continue
+    finally:
+        await stop_heartbeat(heartbeat_task)
+        await redis.close()
 
 
 if __name__ == "__main__":

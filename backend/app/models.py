@@ -192,3 +192,11 @@ class ChainGasEstimate(Base):
     p95_gas_usd_1h: Mapped[float | None] = mapped_column(Float)
     samples_1h: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SettingsStore(Base):
+    __tablename__ = "settings_store"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

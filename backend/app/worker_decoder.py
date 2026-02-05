@@ -13,6 +13,7 @@ from app.db import async_session
 from app.dex_registry import lookup_dex
 from app.logging import configure_logging
 from app.models import Trade
+from app.utils.ops import start_heartbeat, stop_heartbeat
 from app.utils import (
     STREAM_DECODED_TRADES,
     STREAM_RAW_EVENTS,
@@ -412,6 +413,7 @@ async def run_worker() -> None:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     await ensure_consumer_group(redis, stream=STREAM_RAW_EVENTS, group=GROUP_NAME)
     logger.info("decoder_started")
+    heartbeat_task = await start_heartbeat(redis, worker_name=CONSUMER_NAME)
     stop_event = asyncio.Event()
     install_shutdown_handlers(stop_event, logger)
     try:
@@ -424,6 +426,7 @@ async def run_worker() -> None:
                     except asyncio.TimeoutError:
                         continue
     finally:
+        await stop_heartbeat(heartbeat_task)
         await redis.close()
 
 

@@ -87,3 +87,32 @@ class TokenRiskResponse(BaseModel):
 class RegimeResponse(BaseModel):
     regime: str
     updated_at: datetime | None
+
+
+class OpsHealthResponse(BaseModel):
+    heartbeats: dict[str, float | None]
+    stream_lag: dict[str, int]
+
+
+class OpsMetricsResponse(BaseModel):
+    alerts_by_regime: dict[str, int]
+    trap_rate: float
+    avg_net_return_by_horizon: dict[str, float]
+    top_wallets: list[dict[str, Any]]
+    top_pairs: list[dict[str, Any]]
+
+
+class TuningResponse(BaseModel):
+    source: str
+    warning: str | None
+    thresholds: dict[str, float]
+
+
+class TuningPreviewRequest(BaseModel):
+    thresholds: dict[str, float]
+
+
+class TuningPreviewResponse(BaseModel):
+    total_considered: int
+    would_trigger: int
+    thresholds: dict[str, float]
