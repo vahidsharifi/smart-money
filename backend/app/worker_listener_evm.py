@@ -22,10 +22,6 @@ RECONNECT_BASE_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 30.0
 
 
-async def build_watchlist(redis: Redis) -> dict[str, list[str]]:
-    return await get_watch_pairs_snapshot(redis)
-
-
 def get_ws_url(chain: str) -> str:
     config = settings.chain_config[chain]
     if not config.rpc_ws:
@@ -64,16 +60,21 @@ async def publish_log(redis: Redis, *, chain: str, log_event: dict[str, Any]) ->
     logger.info("listener_published chain=%s tx=%s log_index=%s", chain, tx_hash, log_index)
 
 
+async def _watch_addresses(redis: Redis, chain: str) -> list[str]:
+    watchlist = await get_watch_pairs_snapshot(redis)
+    return watchlist.get(chain, [])
+
+
 async def listen_chain(
     redis: Redis,
     *,
     chain: str,
     ws_url: str,
-    addresses: list[str],
     stop_event: asyncio.Event,
 ) -> None:
     backoff = RECONNECT_BASE_SECONDS
     while not stop_event.is_set():
+        addresses = await _watch_addresses(redis, chain)
         if not addresses:
             logger.warning("listener_no_addresses chain=%s", chain)
             try:
@@ -83,7 +84,7 @@ async def listen_chain(
             continue
 
         try:
-            logger.info("listener_connecting chain=%s ws=%s", chain, ws_url)
+            logger.info("listener_connecting chain=%s ws=%s address_count=%s", chain, ws_url, len(addresses))
             async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as socket:
                 subscribe_payload = {
                     "jsonrpc": "2.0",
@@ -96,11 +97,13 @@ async def listen_chain(
 
                 subscription_id: str | None = None
                 backoff = RECONNECT_BASE_SECONDS
+                refresh_deadline = asyncio.get_running_loop().time() + 60.0
                 while not stop_event.is_set():
+                    timeout = max(0.1, refresh_deadline - asyncio.get_running_loop().time())
                     try:
-                        message = await asyncio.wait_for(socket.recv(), timeout=1.0)
+                        message = await asyncio.wait_for(socket.recv(), timeout=timeout)
                     except asyncio.TimeoutError:
-                        continue
+                        break
                     data = json.loads(message)
                     if data.get("id") == 1 and "result" in data:
                         subscription_id = data["result"]
@@ -135,7 +138,6 @@ async def listen_chain(
 async def run_worker() -> None:
     validate_chain_config()
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
-    watchlist = await build_watchlist(redis)
     logger.info(
         "listener_started chains=%s",
         list(settings.chain_config.keys()),
@@ -152,7 +154,6 @@ async def run_worker() -> None:
                         redis,
                         chain=chain,
                         ws_url=ws_url,
-                        addresses=watchlist[chain],
                         stop_event=stop_event,
                     )
                 )

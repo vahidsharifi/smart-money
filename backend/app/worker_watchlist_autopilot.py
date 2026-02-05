@@ -4,14 +4,15 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 
-from app.config import settings, validate_chain_config
+from app.config import settings, validate_chain_config, watch_pairs_cap_for_chain
 from app.db import async_session
 from app.logging import configure_logging
-from app.models import Token, WatchPair
+from app.models import Token, Trade, WatchPair
 from app.services.seed_importer import SEED_PACK_SOURCE
 from app.utils import HttpClient, RetryConfig, install_shutdown_handlers
 
@@ -64,10 +65,6 @@ def _calculate_age_hours(pair: dict[str, Any], now: datetime) -> float | None:
         return None
     created_dt = datetime.utcfromtimestamp(created_ts)
     return max((now - created_dt).total_seconds() / 3600.0, 0.0)
-
-
-def _priority_score(liquidity_usd: float, volume_24h: float) -> int:
-    return int(min(10_000, liquidity_usd / 1000.0 + volume_24h / 500.0))
 
 
 def _extract_goplus_flags(payload: dict[str, Any], token_address: str) -> dict[str, Any]:
@@ -129,6 +126,94 @@ async def _token_known(session, *, chain: str, token_address: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+async def _mev_proxy(session, *, chain: str, pair_address: str, now: datetime, volume_24h: float, liquidity_usd: float) -> float:
+    since = now - timedelta(minutes=30)
+    result = await session.execute(
+        select(func.count())
+        .select_from(Trade)
+        .where(
+            and_(
+                Trade.chain == chain,
+                Trade.pair_address == pair_address,
+                Trade.block_time.is_not(None),
+                Trade.block_time >= since,
+            )
+        )
+    )
+    density = int(result.scalar_one() or 0)
+    if density > 0:
+        return min(1.0, density / 40.0)
+    if liquidity_usd <= 0:
+        return 0.0
+    return 0.7 if (volume_24h / liquidity_usd) > 2.0 else 0.2
+
+
+def _score_pair(*, liquidity_usd: float, volume_24h: float, volatility_proxy: float | None, risk_flagged: bool, mev_proxy: float) -> tuple[float, dict[str, Any]]:
+    liquidity_score = min(1.0, liquidity_usd / 500_000.0)
+    volume_score = min(1.0, volume_24h / 2_000_000.0)
+    volatility_score = min(1.0, abs(volatility_proxy) / 30.0) if volatility_proxy is not None else 0.0
+    risk_penalty = 1.0 if risk_flagged else 0.0
+
+    score = (
+        (liquidity_score * 0.35)
+        + (volume_score * 0.30)
+        + (volatility_score * 0.15)
+        + (mev_proxy * 0.20)
+        - (risk_penalty * 0.5)
+    ) * 100.0
+
+    return score, {
+        "liquidity": liquidity_usd,
+        "volume_24h": volume_24h,
+        "volatility_proxy": volatility_proxy,
+        "risk_flags": risk_flagged,
+        "mev_proxy": mev_proxy,
+        "components": {
+            "liquidity": liquidity_score,
+            "volume": volume_score,
+            "volatility": volatility_score,
+            "risk_penalty": risk_penalty,
+        },
+    }
+
+
+async def _apply_churn_control(session, *, chain: str, now: datetime) -> int:
+    cap = watch_pairs_cap_for_chain(chain)
+    result = await session.execute(
+        select(WatchPair)
+        .where(
+            WatchPair.chain == chain,
+            WatchPair.expires_at > now,
+        )
+        .order_by(WatchPair.priority.desc(), WatchPair.score.desc(), WatchPair.last_seen.desc())
+    )
+    active = result.scalars().all()
+    excess = len(active) - cap
+    if excess <= 0:
+        return 0
+
+    near_expiry_cutoff = now + timedelta(minutes=settings.autopilot_near_expiry_minutes)
+    candidates = [
+        pair
+        for pair in active
+        if pair.source != SEED_PACK_SOURCE and pair.expires_at <= near_expiry_cutoff
+    ]
+    candidates.sort(key=lambda pair: (float(pair.score or 0), pair.expires_at, pair.last_seen or datetime.min))
+
+    demoted = 0
+    for pair in candidates:
+        if demoted >= excess:
+            break
+        pair.priority = -100
+        pair.expires_at = now
+        reason_payload = dict(pair.reason or {})
+        reason_payload["churn_demoted"] = True
+        reason_payload["churn_demoted_at"] = now.isoformat()
+        pair.reason = reason_payload
+        demoted += 1
+    return demoted
+
+
 async def run_autopilot_once() -> int:
     validate_chain_config()
     now = datetime.utcnow()
@@ -152,9 +237,7 @@ async def run_autopilot_once() -> int:
                 for pair in pairs:
                     if str(pair.get("chainId", "")).lower() != chain:
                         continue
-                    liquidity_usd = _safe_float(
-                        (pair.get("liquidity") or {}).get("usd")
-                    ) or 0.0
+                    liquidity_usd = _safe_float((pair.get("liquidity") or {}).get("usd")) or 0.0
                     volume_24h = _safe_float((pair.get("volume") or {}).get("h24")) or 0.0
                     if liquidity_usd < liquidity_floor or volume_24h < volume_floor:
                         continue
@@ -178,15 +261,34 @@ async def run_autopilot_once() -> int:
                     token1_address = _normalize_address(quote_token.get("address"))
 
                     token_to_check = token0_address or token1_address
+                    risk_flagged = False
                     if token_to_check and await _token_known(
                         session, chain=chain, token_address=token_to_check
                     ):
-                        if await _check_known_token_flags(
+                        risk_flagged = await _check_known_token_flags(
                             client, chain=chain, token_address=token_to_check
-                        ):
+                        )
+                        if risk_flagged:
                             continue
 
-                    priority = _priority_score(liquidity_usd, volume_24h)
+                    volatility_proxy = _safe_float((pair.get("priceChange") or {}).get("h24"))
+                    mev_proxy = await _mev_proxy(
+                        session,
+                        chain=chain,
+                        pair_address=pair_address,
+                        now=now,
+                        volume_24h=volume_24h,
+                        liquidity_usd=liquidity_usd,
+                    )
+                    score, reason = _score_pair(
+                        liquidity_usd=liquidity_usd,
+                        volume_24h=volume_24h,
+                        volatility_proxy=volatility_proxy,
+                        risk_flagged=risk_flagged,
+                        mev_proxy=mev_proxy,
+                    )
+
+                    priority = int(max(0, min(10_000, score * 100)))
                     expires_at = now + timedelta(hours=6)
                     existing = await session.get(
                         WatchPair, {"chain": chain, "pair_address": pair_address}
@@ -198,6 +300,8 @@ async def run_autopilot_once() -> int:
                         existing.token1_symbol = quote_token.get("symbol") or existing.token1_symbol
                         existing.token1_address = token1_address or existing.token1_address
                         existing.priority = priority
+                        existing.score = Decimal(f"{score:.6f}")
+                        existing.reason = reason
                         existing.expires_at = expires_at
                         existing.last_seen = now
                         if existing.source != SEED_PACK_SOURCE:
@@ -214,31 +318,20 @@ async def run_autopilot_once() -> int:
                                 token1_address=token1_address,
                                 source="autopilot",
                                 priority=priority,
+                                score=Decimal(f"{score:.6f}"),
+                                reason=reason,
                                 expires_at=expires_at,
                                 last_seen=now,
                             )
                         )
                     inserted += 1
 
-            await session.commit()
-
             for chain in ("ethereum", "bsc"):
-                result = await session.execute(
-                    select(WatchPair)
-                    .where(
-                        WatchPair.chain == chain,
-                        WatchPair.source == "autopilot",
-                        WatchPair.expires_at > now,
-                    )
-                    .order_by(WatchPair.priority.desc(), WatchPair.last_seen.desc())
-                )
-                active = result.scalars().all()
-                excess = active[settings.autopilot_max_pairs_per_chain :]
-                for pair in excess:
-                    pair.expires_at = now
-                    pair.priority = min(pair.priority, 0)
-                if excess:
-                    await session.commit()
+                demoted = await _apply_churn_control(session, chain=chain, now=now)
+                if demoted:
+                    logger.info("autopilot_churn_demoted chain=%s demoted=%s", chain, demoted)
+
+            await session.commit()
 
     logger.info("autopilot_complete inserted=%s", inserted)
     return inserted

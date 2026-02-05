@@ -5,13 +5,12 @@ from datetime import datetime
 from typing import Any
 
 from redis.asyncio import Redis
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.sql import nulls_last
 
-from app.config import settings
+from app.config import settings, watch_pairs_cap_for_chain
 from app.db import async_session
 from app.models import WatchPair
-from app.services.seed_importer import SEED_PACK_SOURCE
 
 WATCH_PAIRS_SNAPSHOT_KEY = "titan:watch_pairs:snapshot"
 WATCH_PAIRS_SNAPSHOT_TTL_SECONDS = 60
@@ -32,13 +31,19 @@ async def get_watch_pairs_snapshot(redis: Redis) -> dict[str, list[str]]:
     now = datetime.utcnow()
     async with async_session() as session:
         for chain in settings.chain_config:
+            cap = watch_pairs_cap_for_chain(chain)
             result = await session.execute(
                 select(WatchPair)
                 .where(
                     WatchPair.chain == chain,
-                    or_(WatchPair.expires_at > now, WatchPair.source == SEED_PACK_SOURCE),
+                    WatchPair.expires_at > now,
                 )
-                .order_by(WatchPair.priority.desc(), nulls_last(WatchPair.last_seen.desc()))
+                .order_by(
+                    WatchPair.priority.desc(),
+                    WatchPair.score.desc(),
+                    nulls_last(WatchPair.last_seen.desc()),
+                )
+                .limit(cap)
             )
             pairs = result.scalars().all()
             snapshot[chain] = [
