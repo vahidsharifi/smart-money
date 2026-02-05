@@ -11,13 +11,28 @@ from app.services.merit import run_merit_update_once
 from app.worker_alerts import run_once as run_alerts_once
 
 
-async def _reset_rows(session, *, wallet: str, token_fail: str, token_pass: str, tx_fail: str, tx_pass: str) -> None:
-    await session.execute(delete(SignalOutcome).where(SignalOutcome.alert_id.in_(select(Alert.id).where(Alert.wallet_address == wallet))))
-    await session.execute(delete(Alert).where(Alert.wallet_address == wallet))
+async def _reset_rows(
+    session,
+    *,
+    wallet: str,
+    seed_wallet: str,
+    token_fail: str,
+    token_pass: str,
+    tx_fail: str,
+    tx_pass: str,
+) -> None:
+    await session.execute(
+        delete(SignalOutcome).where(
+            SignalOutcome.alert_id.in_(
+                select(Alert.id).where(Alert.wallet_address.in_([wallet, seed_wallet]))
+            )
+        )
+    )
+    await session.execute(delete(Alert).where(Alert.wallet_address.in_([wallet, seed_wallet])))
     await session.execute(delete(Trade).where(Trade.wallet_address == wallet))
     await session.execute(delete(TokenRisk).where(TokenRisk.address.in_([token_fail, token_pass])))
     await session.execute(delete(WalletMetric).where(WalletMetric.wallet_address == wallet))
-    await session.execute(delete(Wallet).where(Wallet.address == wallet))
+    await session.execute(delete(Wallet).where(Wallet.address.in_([wallet, seed_wallet])))
 
 
 async def main() -> None:
@@ -25,6 +40,7 @@ async def main() -> None:
     token_outcome = f"0x{uuid.uuid4().hex[:40]}".lower()
     token_fail = f"0x{uuid.uuid4().hex[:40]}".lower()
     token_pass = f"0x{uuid.uuid4().hex[:40]}".lower()
+    seed_wallet = f"0x{uuid.uuid4().hex[:40]}".lower()
     tx_fail = "0x" + uuid.uuid4().hex * 2
     tx_pass = "0x" + uuid.uuid4().hex * 2
 
@@ -32,6 +48,7 @@ async def main() -> None:
         await _reset_rows(
             session,
             wallet=wallet,
+            seed_wallet=seed_wallet,
             token_fail=token_fail,
             token_pass=token_pass,
             tx_fail=tx_fail,
@@ -82,6 +99,35 @@ async def main() -> None:
                 tradeable_peak_gain=Decimal("0.22"),
                 tradeable_drawdown=Decimal("-0.04"),
                 net_tradeable_return_est=Decimal("0.15"),
+                trap_flag=False,
+                evaluated_at=datetime.utcnow(),
+            )
+        )
+
+        # Seed outcomes for token_pass so NetEV uses a higher derived expected move.
+        seed_alert = Alert(
+            chain="ethereum",
+            wallet_address=seed_wallet,
+            token_address=token_pass,
+            alert_type="trade_conviction",
+            tss=75.0,
+            conviction=55.0,
+            reasons={"seed": True},
+            narrative="seed",
+            created_at=datetime.utcnow() - timedelta(hours=12),
+        )
+        session.add(seed_alert)
+        await session.flush()
+        session.add(
+            SignalOutcome(
+                alert_id=seed_alert.id,
+                horizon_minutes=360,
+                was_sellable_entire_window=True,
+                min_exit_slippage_1k=Decimal("0.01"),
+                max_exit_slippage_1k=Decimal("0.02"),
+                tradeable_peak_gain=Decimal("0.25"),
+                tradeable_drawdown=Decimal("-0.03"),
+                net_tradeable_return_est=Decimal("0.18"),
                 trap_flag=False,
                 evaluated_at=datetime.utcnow(),
             )
