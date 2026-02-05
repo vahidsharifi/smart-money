@@ -4,12 +4,12 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.config import settings, validate_chain_config
 from app.db import async_session
 from app.logging import configure_logging
-from app.models import Alert, TokenRisk, Trade, WalletMetric
+from app.models import Alert, SignalOutcome, TokenRisk, Trade, WalletMetric
 from app.narrator import narrate_alert
 from app.utils import install_shutdown_handlers
 from app.utils.wallets import is_wallet_ignored
@@ -41,6 +41,48 @@ def _calculate_conviction(*, tss_score: float, total_value: float | None) -> flo
     return round(conviction, 2)
 
 
+def _chain_expected_move(chain: str) -> float:
+    if chain == "bsc":
+        return settings.netev_expected_move_bsc
+    return settings.netev_expected_move_eth
+
+
+def _chain_min_usd_profit(chain: str) -> float:
+    if chain == "bsc":
+        return settings.netev_min_usd_profit_bsc
+    return settings.netev_min_usd_profit_eth
+
+
+def _chain_min_roi(chain: str) -> float:
+    if chain == "bsc":
+        return settings.netev_min_roi_bsc
+    return settings.netev_min_roi_eth
+
+
+def _chain_gas_cost(chain: str) -> float:
+    if chain == "bsc":
+        return settings.netev_gas_cost_usd_bsc
+    return settings.netev_gas_cost_usd_eth
+
+
+async def _derived_expected_move(session, *, chain: str, token_address: str) -> float | None:
+    result = await session.execute(
+        select(func.avg(SignalOutcome.net_tradeable_return_est))
+        .join(Alert, Alert.id == SignalOutcome.alert_id)
+        .where(
+            Alert.chain == chain,
+            Alert.token_address == token_address,
+            SignalOutcome.was_sellable_entire_window.is_(True),
+            SignalOutcome.trap_flag.is_(False),
+            SignalOutcome.net_tradeable_return_est.is_not(None),
+        )
+    )
+    avg_outcome = result.scalar_one_or_none()
+    if avg_outcome is None:
+        return None
+    return max(0.0, min(0.2, float(avg_outcome)))
+
+
 async def _latest_alert(session, *, chain: str, wallet_address: str, token_address: str) -> Alert | None:
     result = await session.execute(
         select(Alert)
@@ -54,6 +96,52 @@ async def _latest_alert(session, *, chain: str, wallet_address: str, token_addre
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _netev_gate(
+    session,
+    *,
+    trade: Trade,
+    token_risk: TokenRisk,
+) -> tuple[bool, dict]:
+    size_usd = float(trade.usd_value or 0.0)
+    if size_usd <= 0:
+        return False, {"reason": "missing_trade_size_usd"}
+
+    derived_move = await _derived_expected_move(
+        session,
+        chain=trade.chain,
+        token_address=trade.token_address or "",
+    )
+    expected_move = derived_move if derived_move is not None else _chain_expected_move(trade.chain)
+
+    slippage = settings.netev_default_slippage
+    if isinstance(token_risk.components, dict):
+        slippage = float(token_risk.components.get("estimated_slippage", slippage) or slippage)
+
+    gross_profit_usd = size_usd * expected_move
+    gas_cost_usd = _chain_gas_cost(trade.chain)
+    slippage_cost_usd = size_usd * max(0.0, slippage)
+    netev_usd = gross_profit_usd - gas_cost_usd - slippage_cost_usd
+    netev_roi = netev_usd / size_usd if size_usd > 0 else -1.0
+
+    min_usd = _chain_min_usd_profit(trade.chain)
+    min_roi = _chain_min_roi(trade.chain)
+    passed = netev_usd >= min_usd and netev_roi >= min_roi
+    payload = {
+        "passed": passed,
+        "expected_move": round(expected_move, 6),
+        "derived_from_outcomes": derived_move is not None,
+        "size_usd": round(size_usd, 6),
+        "gross_profit_usd": round(gross_profit_usd, 6),
+        "gas_cost_usd": round(gas_cost_usd, 6),
+        "slippage_cost_usd": round(slippage_cost_usd, 6),
+        "netev_usd": round(netev_usd, 6),
+        "netev_roi": round(netev_roi, 6),
+        "min_usd_profit": min_usd,
+        "min_roi_after_costs": min_roi,
+    }
+    return passed, payload
 
 
 async def run_once() -> int:
@@ -127,6 +215,22 @@ async def run_once() -> int:
             if token_risk.score is not None:
                 tss_score = float(token_risk.score)
 
+            netev_passed, netev = await _netev_gate(
+                session,
+                trade=trade,
+                token_risk=token_risk,
+            )
+            if not netev_passed:
+                logger.info(
+                    "alert_skip_netev chain=%s wallet=%s token=%s netev_usd=%.2f netev_roi=%.4f",
+                    trade.chain,
+                    trade.wallet_address,
+                    trade.token_address,
+                    netev.get("netev_usd", 0.0),
+                    netev.get("netev_roi", 0.0),
+                )
+                continue
+
             conviction = _calculate_conviction(
                 tss_score=tss_score,
                 total_value=wallet_metric.total_value,
@@ -138,6 +242,7 @@ async def run_once() -> int:
                 "wallet_total_value": wallet_metric.total_value,
                 "tss": tss_score,
                 "cooldown_minutes": COOLDOWN_MINUTES,
+                "netev": netev,
                 "trade": {
                     "tx_hash": trade.tx_hash,
                     "log_index": trade.log_index,
