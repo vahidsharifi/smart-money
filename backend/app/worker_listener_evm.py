@@ -10,7 +10,7 @@ from redis.asyncio import Redis
 
 from app.config import settings, validate_chain_config
 from app.logging import configure_logging
-from app.utils import STREAM_RAW_EVENTS, dedupe_with_ttl, publish_to_stream
+from app.utils import STREAM_RAW_EVENTS, dedupe_with_ttl, install_shutdown_handlers, publish_to_stream
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -66,12 +66,22 @@ async def publish_log(redis: Redis, *, chain: str, log_event: dict[str, Any]) ->
     logger.info("listener_published chain=%s tx=%s log_index=%s", chain, tx_hash, log_index)
 
 
-async def listen_chain(redis: Redis, *, chain: str, ws_url: str, addresses: list[str]) -> None:
+async def listen_chain(
+    redis: Redis,
+    *,
+    chain: str,
+    ws_url: str,
+    addresses: list[str],
+    stop_event: asyncio.Event,
+) -> None:
     backoff = RECONNECT_BASE_SECONDS
-    while True:
+    while not stop_event.is_set():
         if not addresses:
             logger.warning("listener_no_addresses chain=%s", chain)
-            await asyncio.sleep(60)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=60.0)
+            except asyncio.TimeoutError:
+                continue
             continue
 
         try:
@@ -88,8 +98,11 @@ async def listen_chain(redis: Redis, *, chain: str, ws_url: str, addresses: list
 
                 subscription_id: str | None = None
                 backoff = RECONNECT_BASE_SECONDS
-                while True:
-                    message = await socket.recv()
+                while not stop_event.is_set():
+                    try:
+                        message = await asyncio.wait_for(socket.recv(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
                     data = json.loads(message)
                     if data.get("id") == 1 and "result" in data:
                         subscription_id = data["result"]
@@ -114,7 +127,10 @@ async def listen_chain(redis: Redis, *, chain: str, ws_url: str, addresses: list
                 exc,
                 backoff,
             )
-            await asyncio.sleep(backoff)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+            except asyncio.TimeoutError:
+                pass
             backoff = min(backoff * 2, RECONNECT_MAX_SECONDS)
 
 
@@ -126,13 +142,21 @@ async def run_worker() -> None:
         "listener_started chains=%s",
         list(settings.chain_config.keys()),
     )
+    stop_event = asyncio.Event()
+    install_shutdown_handlers(stop_event, logger)
     try:
         tasks = []
         for chain in ("ethereum", "bsc"):
             ws_url = get_ws_url(chain)
             tasks.append(
                 asyncio.create_task(
-                    listen_chain(redis, chain=chain, ws_url=ws_url, addresses=watchlist[chain])
+                    listen_chain(
+                        redis,
+                        chain=chain,
+                        ws_url=ws_url,
+                        addresses=watchlist[chain],
+                        stop_event=stop_event,
+                    )
                 )
             )
         await asyncio.gather(*tasks)

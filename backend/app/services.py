@@ -1,33 +1,43 @@
-import asyncio
 import json
 import logging
-import random
 from typing import Any
 
 import httpx
 from redis.asyncio import Redis
 
 from app.config import settings
+from app.utils import HttpClient, RetryConfig
 
 logger = logging.getLogger(__name__)
 
+_http_client: HttpClient | None = None
+
+async def get_http_client() -> HttpClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = HttpClient(
+            retry_config=RetryConfig(attempts=3, backoff_factor=0.5, max_backoff=5.0)
+        )
+    return _http_client
+
+
+async def close_http_client() -> None:
+    global _http_client
+    if _http_client is not None:
+        await _http_client.close()
+        _http_client = None
+
 
 async def fetch_with_retries(url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    backoff = 0.5
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                return response.json()
-        except (httpx.HTTPError, json.JSONDecodeError) as exc:
-            logger.warning("request_failed", extra={"url": url, "attempt": attempt, "error": str(exc)})
-            if attempt == max_attempts:
-                raise
-            sleep_time = backoff * (2 ** (attempt - 1)) + random.uniform(0, 0.2)
-            await asyncio.sleep(sleep_time)
-    return {}
+    client = await get_http_client()
+    try:
+        payload = await client.get_json(url, params=params)
+        if isinstance(payload, dict):
+            return payload
+        raise ValueError("Expected JSON object")
+    except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
+        logger.warning("request_failed", extra={"url": url, "error": str(exc)})
+        raise
 
 
 async def get_cached_json(redis: Redis, key: str) -> dict[str, Any] | None:

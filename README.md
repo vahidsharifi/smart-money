@@ -130,6 +130,12 @@ WATCHED_ADDRESSES_BSC=["0x123...", "0x456..."]
 Run these after `docker compose up --build`:
 
 ```bash
+make smoke
+```
+
+Or run them individually:
+
+```bash
 ./scripts/smoke_api.sh
 ./scripts/smoke_worker.sh
 ./scripts/smoke_web.sh
@@ -141,6 +147,16 @@ You can also run the backend API smoke script after seeding alerts:
 docker compose exec api python -m app.scripts.smoke_alerts
 docker compose exec api python -m app.scripts.smoke_api
 ```
+
+## Troubleshooting
+
+### Smoke tests fail
+
+* Ensure the database is fresh: `make reset_db && make migrate`.
+* If the decoder smoke test fails repeatedly, inspect the dead-letter stream
+  `titan:raw_events:dead` in Redis to see payloads that could not be decoded.
+* If DexScreener or GoPlus requests fail, the services enter a short circuit-breaker
+  cooldown to avoid spamming upstream APIs. Wait for the cooldown and retry.
 
 ## Architecture notes
 - Deterministic scoring first. LLM narration only summarizes structured reasons and never alters the score.

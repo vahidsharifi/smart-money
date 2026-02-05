@@ -20,6 +20,7 @@ from app.utils import (
     consume_from_stream,
     dedupe_with_ttl,
     ensure_consumer_group,
+    install_shutdown_handlers,
     publish_to_stream,
     retry_or_dead_letter,
 )
@@ -340,14 +341,19 @@ async def run_worker() -> None:
     await ensure_consumer_group(redis, stream=STREAM_DECODED_TRADES, group=DECODED_GROUP)
     await ensure_consumer_group(redis, stream=STREAM_RISK_JOBS, group=RISK_GROUP)
     logger.info("risk_worker_started")
+    stop_event = asyncio.Event()
+    install_shutdown_handlers(stop_event, logger)
     try:
         async with async_session() as session:
             async with HttpClient() as client:
-                while True:
+                while not stop_event.is_set():
                     decoded = await process_decoded_batch(redis)
                     risk_jobs = await process_risk_batch(redis, client=client, session=session)
                     if decoded == 0 and risk_jobs == 0:
-                        await asyncio.sleep(1)
+                        try:
+                            await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+                        except asyncio.TimeoutError:
+                            continue
     finally:
         await redis.close()
 

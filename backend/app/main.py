@@ -27,7 +27,7 @@ from app.schemas import (
     WalletTier,
 )
 from app.scoring import deterministic_score
-from app.services import fetch_dexscreener, fetch_goplus, narrate_with_ollama
+from app.services import close_http_client, fetch_dexscreener, fetch_goplus, narrate_with_ollama
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -243,3 +243,8 @@ async def run_migrations() -> None:
     except Exception as exc:
         logger.exception("migration_failed")
         raise RuntimeError("Migration failed") from exc
+
+
+@app.on_event("shutdown")
+async def shutdown_resources() -> None:
+    await close_http_client()

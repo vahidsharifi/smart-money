@@ -12,6 +12,7 @@ from app.db import async_session
 from app.logging import configure_logging
 from app.models import Alert, Position, Trade, WalletMetric
 from app.narrator import narrate_alert
+from app.utils import install_shutdown_handlers
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -237,10 +238,15 @@ async def run_once() -> int:
 async def run_worker(interval_seconds: int = 3600) -> None:
     validate_chain_config()
     logger.info("profiler_started")
-    while True:
+    stop_event = asyncio.Event()
+    install_shutdown_handlers(stop_event, logger)
+    while not stop_event.is_set():
         updated = await run_once()
         logger.info("profiler_snapshot_complete wallets=%s", updated)
-        await asyncio.sleep(interval_seconds)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+        except asyncio.TimeoutError:
+            continue
 
 
 if __name__ == "__main__":
