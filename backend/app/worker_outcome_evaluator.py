@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.config import settings
 from app.db import async_session
@@ -146,7 +146,39 @@ def _estimate_slippage(snapshots: list[dict[str, Any]]) -> tuple[float | None, f
     return min(candidates), max(candidates), False
 
 
-async def _fetch_dex_prices(client: HttpClient, *, token_address: str) -> list[float]:
+def _snapshot_sellable(snapshot: dict[str, Any]) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    for key in ("sellability", "sellable", "can_sell"):
+        value = snapshot.get(key)
+        if isinstance(value, bool):
+            return value
+    flags = _normalize_flags(snapshot.get("flags"))
+    if flags.intersection(CRITICAL_RISK_FLAGS):
+        return False
+    return True
+
+
+def _snapshot_max_size(snapshot: dict[str, Any]) -> float | None:
+    direct = _safe_float(snapshot.get("max_suggested_size_usd"))
+    if direct is not None:
+        return direct
+    components = snapshot.get("components")
+    if isinstance(components, dict):
+        nested = _safe_float(components.get("max_suggested_size_usd"))
+        if nested is not None:
+            return nested
+    return None
+
+
+def _is_exit_feasible_snapshot(snapshot: dict[str, Any]) -> bool:
+    max_size = _snapshot_max_size(snapshot)
+    if max_size is None or max_size < 1000:
+        return False
+    return _snapshot_sellable(snapshot)
+
+
+async def _fetch_dex_prices(client: HttpClient, *, token_address: str, anchor_time: datetime) -> list[tuple[datetime, float]]:
     now = time.time()
     cached = _dex_cache.get(token_address)
     if cached and now - cached[0] < DEX_CACHE_TTL_SECONDS:
@@ -159,7 +191,7 @@ async def _fetch_dex_prices(client: HttpClient, *, token_address: str) -> list[f
 
     if not isinstance(payload, dict):
         return []
-    prices: list[float] = []
+    prices: list[tuple[datetime, float]] = []
     pairs = payload.get("pairs")
     if not isinstance(pairs, list):
         return prices
@@ -168,7 +200,7 @@ async def _fetch_dex_prices(client: HttpClient, *, token_address: str) -> list[f
             continue
         price = _safe_float(pair.get("priceUsd"))
         if price is not None and price > 0:
-            prices.append(price)
+            prices.append((anchor_time, price))
     return prices
 
 
@@ -178,38 +210,88 @@ async def _price_series(
     *,
     chain: str,
     token_address: str,
+    alert: Alert,
     start: datetime,
     end: datetime,
-) -> tuple[list[float], bool]:
+) -> tuple[list[tuple[datetime, float]], bool]:
+    reasons = alert.reasons if isinstance(alert.reasons, dict) else {}
+    pair_address = reasons.get("pair_address")
+
+    filters = [Trade.token_address == token_address]
+    if isinstance(pair_address, str) and pair_address:
+        filters.append(Trade.pair_address == pair_address)
+
     result = await session.execute(
-        select(Trade.price)
+        select(Trade.block_time, Trade.price)
         .where(
             Trade.chain == chain,
-            Trade.token_address == token_address,
+            or_(*filters),
             Trade.block_time >= start,
             Trade.block_time <= end,
+            Trade.decode_confidence >= 0.6,
             Trade.price.isnot(None),
             Trade.price > 0,
         )
         .order_by(Trade.block_time.asc())
     )
-    prices = [float(value) for value in result.scalars().all() if value is not None and value > 0]
+    prices = [
+        (ts, float(value))
+        for ts, value in result.all()
+        if ts is not None and value is not None and value > 0
+    ]
     if len(prices) >= 2:
         return prices, False
 
-    dex_prices = await _fetch_dex_prices(client, token_address=token_address)
+    dex_prices = await _fetch_dex_prices(client, token_address=token_address, anchor_time=end)
     all_prices = prices + dex_prices
     return all_prices, len(all_prices) < 2
 
 
-def _entry_price(alert: Alert, prices: list[float]) -> float | None:
+def _entry_price(alert: Alert, prices: list[tuple[datetime, float]]) -> float | None:
     reasons = alert.reasons if isinstance(alert.reasons, dict) else {}
     entry = _safe_float(reasons.get("entry_price"))
     if entry is not None and entry > 0:
         return entry
     if prices:
-        return prices[0]
+        return prices[0][1]
     return None
+
+
+def _exit_feasible_peak(
+    prices: list[tuple[datetime, float]],
+    in_window_snapshots: list[dict[str, Any]],
+    *,
+    entry_price: float,
+) -> tuple[float | None, datetime | None, bool]:
+    if not prices:
+        return None, None, False
+
+    eligible_times = {
+        snapshot_time
+        for snapshot in in_window_snapshots
+        if (snapshot_time := _parse_snapshot_time(snapshot)) is not None and _is_exit_feasible_snapshot(snapshot)
+    }
+    if not eligible_times:
+        return None, None, False
+
+    max_gain: float | None = None
+    max_time: datetime | None = None
+    for price_time, price in prices:
+        if price_time not in eligible_times:
+            continue
+        gain = price / entry_price - 1
+        if max_gain is None or gain > max_gain:
+            max_gain = gain
+            max_time = price_time
+
+    if max_gain is None:
+        return None, None, False
+    was_sellable_entire_window = all(
+        _is_exit_feasible_snapshot(snapshot)
+        for snapshot in in_window_snapshots
+        if _parse_snapshot_time(snapshot) is not None
+    )
+    return max_gain, max_time, was_sellable_entire_window
 
 
 def _net_return(
@@ -262,6 +344,7 @@ async def _evaluate_alert_horizon(
         client,
         chain=alert.chain,
         token_address=alert.token_address,
+        alert=alert,
         start=window_start,
         end=window_end,
     )
@@ -270,17 +353,36 @@ async def _evaluate_alert_horizon(
     peak_gain: float | None = None
     drawdown: float | None = None
     if not prices_insufficient and entry_price and entry_price > 0:
-        peak_gain = max(prices) / entry_price - 1
-        drawdown = min(prices) / entry_price - 1
+        raw_values = [price for _, price in prices]
+        peak_gain = max(raw_values) / entry_price - 1
+        drawdown = min(raw_values) / entry_price - 1
 
-    net = _net_return(peak_gain, max_slippage=max_slippage, trap_flag=trap_flag, sellable=sellable)
+    raw_peak_gain = peak_gain
+    exit_feasible_peak_gain: float | None = None
+    exit_feasible_peak_time: datetime | None = None
+    was_sellable_entire_window = sellable
+    if not prices_insufficient and entry_price and entry_price > 0:
+        exit_feasible_peak_gain, exit_feasible_peak_time, was_sellable_entire_window = _exit_feasible_peak(
+            prices,
+            in_window_snapshots,
+            entry_price=entry_price,
+        )
+        if exit_feasible_peak_gain is None:
+            peak_gain = None
+            was_sellable_entire_window = False
+        else:
+            peak_gain = raw_peak_gain
+
+    net = _net_return(peak_gain, max_slippage=max_slippage, trap_flag=trap_flag, sellable=was_sellable_entire_window)
     return SignalOutcome(
         alert_id=alert.id,
         horizon_minutes=horizon_minutes,
-        was_sellable_entire_window=sellable,
+        was_sellable_entire_window=was_sellable_entire_window,
         min_exit_slippage_1k=_to_decimal(min_slippage),
         max_exit_slippage_1k=_to_decimal(max_slippage),
         tradeable_peak_gain=_to_decimal(peak_gain),
+        exit_feasible_peak_gain=_to_decimal(exit_feasible_peak_gain),
+        exit_feasible_peak_time=exit_feasible_peak_time,
         tradeable_drawdown=_to_decimal(drawdown),
         net_tradeable_return_est=_to_decimal(net),
         trap_flag=trap_flag,
