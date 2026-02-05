@@ -1,5 +1,6 @@
 from logging.config import fileConfig
 from pathlib import Path
+import os
 import sys
 
 from sqlalchemy import pool
@@ -19,6 +20,11 @@ config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Allow DATABASE_URL to override alembic.ini (matches app.config usage).
+database_url = os.getenv("DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url)
 
 target_metadata = Base.metadata
 

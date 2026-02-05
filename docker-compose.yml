@@ -38,7 +38,6 @@ services:
     build: ./backend
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
     ports:
@@ -56,7 +55,6 @@ services:
     command: python -m app.worker_listener_evm
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
     depends_on:
@@ -70,7 +68,6 @@ services:
     command: python -m app.worker_decoder
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
     depends_on:
@@ -84,7 +81,6 @@ services:
     command: python -m app.worker_risk
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
     depends_on:
@@ -98,7 +94,6 @@ services:
     command: python -m app.worker_profiler
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
     depends_on:
@@ -112,7 +107,6 @@ services:
     command: python -m app.worker_alerts
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
     depends_on:
