@@ -116,7 +116,7 @@ async def list_alerts(
 ) -> list[AlertResponse]:
     query = select(Alert).order_by(Alert.created_at.desc()).offset(offset).limit(limit)
     if chain:
-        query = query.where(Alert.chain == chain)
+        query = query.where(Alert.chain == chain.lower())
     result = await session.execute(query)
     alerts = result.scalars().all()
     return [
@@ -183,12 +183,15 @@ async def get_wallet(
     address: str = Path(..., min_length=3),
     session: AsyncSession = Depends(get_session),
 ) -> WalletDetail:
-    result = await session.execute(select(WalletMetric).where(WalletMetric.wallet_address == address))
+    normalized_address = address.lower()
+    result = await session.execute(
+        select(WalletMetric).where(WalletMetric.wallet_address == normalized_address)
+    )
     metrics = result.scalars().all()
     if not metrics:
         raise HTTPException(status_code=404, detail="Wallet not found")
     return WalletDetail(
-        address=address,
+        address=normalized_address,
         wallets=[
             WalletSummary(
                 chain=metric.chain,
@@ -209,8 +212,12 @@ async def get_token_risk(
     address: str = Path(..., min_length=3),
     session: AsyncSession = Depends(get_session),
 ) -> TokenRiskResponse:
+    normalized_chain = chain.lower()
+    normalized_address = address.lower()
     result = await session.execute(
-        select(TokenRisk).where(TokenRisk.chain == chain, TokenRisk.address == address).limit(1)
+        select(TokenRisk)
+        .where(TokenRisk.chain == normalized_chain, TokenRisk.address == normalized_address)
+        .limit(1)
     )
     token_risk = result.scalar_one_or_none()
     if token_risk is None:
